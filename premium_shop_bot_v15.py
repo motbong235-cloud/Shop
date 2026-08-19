@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App / Premium Emoji)
+Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App)
 ----------------------------------
 លក់ account premium (ChatGPT, Netflix, Spotify, Office365, Canva ...) តាម Telegram
 - Stock គ្រប់គ្រងតាមឯកសារ .txt (មួយបន្ទាត់ = account មួយ)
 - ប្រព័ន្ធ Wallet (deposit លុយចូល -> ទិញអីវ៉ាន់ចេញ)
 - KHQR deposit តាម CamRapidPay + auto-polling (ឬ QR ដោយដៃ បើគ្មាន Bakong ID)
 - Admin panel ក្នុង Telegram ទាំងស្រុង (reply keyboard + inline button, គ្មាន Mini App)
-- ជាវ Bot ផ្ទាល់ខ្លួន (subscriber clone) នៅតែមាន — ជា chat flow ធម្មតា មិនអាស្រ័យ Mini App
+- Premium Emoji System (ស្រេចចិត្ត, /setupemoji, ត្រូវការ Telegram Premium)
 
 ត្រូវការ Environment Variables:
   BOT_TOKEN            - Telegram Bot Token
@@ -15,14 +15,15 @@ Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្ម
   CAMRAPIDPAY_API_KEY  - API key របស់ CamRapidPay (ចាំបាច់សម្រាប់ deposit តាម Bakong KHQR)
   CAMRAPID_CREATE_URL / CAMRAPID_CHECK_URL / PUBLIC_BASE_URL - កំណត់ webhook_url សម្រាប់ CamRapidPay
 
-ចំណាំ (v15 — Classic): កំណែនេះកែចេញពី v14 ដោយ (1) លុប Premium Emoji System ទាំងស្រុង
-  (get/save_emoji_map, premium_text, emoji_icon_for, /setupemoji, monkey-patch send_message
-  ជាដើម) ព្រោះមិនចាំបាច់ទៀត — button/message ប្រើ text/emoji ធម្មតាទាំងអស់។ (2) លុប Mini App
-  (miniapp.html, web_app button, /api/* Flask routes, initData verification, review/promo
-  system ដែលអាស្រ័យ Mini App តែប៉ុណ្ណោះ) ព្រោះឥឡូវប្រើ bot តាម reply keyboard + inline
-  button ធម្មតាទាំងស្រុង — /start ឥឡូវបង្ហាញម៉ឺនុយពេញ (reply keyboard) ផ្ទាល់មិនចាំបាច់ចុច
-  ចូល Mini App ទៀតទេ។ មុខងារផ្សេងទៀត (wallet, deposit KHQR/QR ដោយដៃ, stock, referral,
-  ជាវ Bot ផ្ទាល់ខ្លួន, broadcast) នៅតែដំណើរការដូចដើមទាំងអស់ ព្រោះជា chat-flow រួចស្រាប់។
+ចំណាំ (v15 — Classic): កំណែនេះកែចេញពី v14 ដោយ (1) លុប Mini App (miniapp.html, web_app
+  button, /api/* Flask routes, initData verification, review/promo system) ព្រោះឥឡូវ
+  ប្រើ bot តាម reply keyboard + inline button ធម្មតាទាំងស្រុង — /start ឥឡូវបង្ហាញម៉ឺនុយពេញ
+  (reply keyboard) ផ្ទាល់មិនចាំបាច់ចុចចូល Mini App ទៀតទេ។ (2) លុប ប្រព័ន្ធ ណែនាំមិត្ត
+  (Referral: referred_by/ref_count/ref_earned/credit_referral_commission/REFERRAL_PERCENT)
+  និង ជាវ Bot ផ្ទាល់ខ្លួន (Subscriber clone deploy engine: SUBS_FILE, deploy_subscriber_bot,
+  /subscribe, /activatesub, /stopsub, /subs, /setrentalprice) ទាំងស្រុង ព្រោះលែងប្រើហើយ។
+  មុខងារផ្សេងទៀត (wallet, deposit KHQR/QR ដោយដៃ, stock, broadcast, premium emoji) នៅតែ
+  ដំណើរការដូចដើមទាំងអស់។
 """
 
 import os
@@ -31,12 +32,8 @@ import io
 import html
 import json
 import time
-import uuid
-import signal
 import hashlib
 import threading
-import subprocess
-import sys
 import requests
 import telebot
 from telebot import types
@@ -57,10 +54,6 @@ CAMRAPID_WEBHOOK_URL = os.environ.get(
     f"{PUBLIC_BASE_URL.rstrip('/')}/camrapid-webhook" if PUBLIC_BASE_URL else "",
 )
 STORE_NAME = os.environ.get("STORE_NAME", "Kairozen Store")  # ឈ្មោះហាង — hardcode ជា default តែអាច override តាម env
-# ភាគរយ commission ដែលអ្នកណែនាំ (referrer) ទទួលបាន រាល់ពេលអ្នកដែលខ្លួនណែនាំ (referred user)
-# ដាក់លុយចូល wallet ជោគជ័យ (ឧ. 5 មានន័យថា ណែនាំគេដាក់ $10 → ខ្លួនឯងទទួល $0.50 ចូល wallet
-# ស្វ័យប្រវត្តិ)។ អាចកែបានតាម Env Var REFERRAL_PERCENT
-REFERRAL_PERCENT = float(os.environ.get("REFERRAL_PERCENT", "5"))
 # ID របស់ channel/group ដែលចង់ឲ្យ bot ផ្ញើសារជូនដំណឹងស្វ័យប្រវត្តិ ពេលមាន deposit
 # ឬ order ជោគជ័យ។ ដាក់ hardcode ត្រង់នេះផ្ទាល់ (negative number ឧ. -1001234567890
 # សម្រាប់ channel/supergroup) — អាចដាក់ច្រើនក្នុងមួយ list បាន ១ សម្រាប់ channel ១ សម្រាប់ group។
@@ -94,17 +87,11 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 PRODUCTS_FILE = os.path.join(DATA_DIR, "products.json")
 ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
 EMOJI_FILE = os.path.join(DATA_DIR, "premium_emoji.json")
-SUBS_FILE = os.path.join(DATA_DIR, "subscriptions.json")
 # ករណីហាង/subscriber គ្មាន Bakong ID ផ្ទាល់ខ្លួន (គ្មាន CAMRAPIDPAY_API_KEY) — deposit នឹងប្រើ
 # QR ផ្ទាល់ខ្លួនដែល admin កំណត់ដោយដៃ (មិនមែន QR របស់ហាងមេ) រួច user ត្រូវផ្ញើវិក័យប័ត្រ/screenshot
 # មកឲ្យ admin ត្រួតពិនិត្យ + បញ្ចូលលុយឲ្យដោយដៃ (មិនមែន auto-detect ដូច Bakong ទេ)
 PAYMENT_CONFIG_FILE = os.path.join(DATA_DIR, "payment_config.json")
 PENDING_DEPOSITS_FILE = os.path.join(DATA_DIR, "pending_deposits.json")
-# តម្លៃជួល Bot ផ្ទាល់ខ្លួន គិតជាថ្ងៃ (USD/ថ្ងៃ) — គិតលុយគ្រប់ subscriber ទាំងអស់
-BOT_RENTAL_PER_DAY_DEFAULT = float(os.environ.get("BOT_RENTAL_PER_DAY", "0.15"))
-# ប្រសិនបើជា bot ដែល deploy ជូន subscriber (clone) — លាក់ប៊ូតុង "ជាវ Bot ផ្ទាល់ខ្លួន"
-IS_SUBSCRIBER_BOT = os.environ.get("IS_SUBSCRIBER_BOT", "") == "1"
-
 os.makedirs(STOCK_DIR, exist_ok=True)
 
 
@@ -192,7 +179,6 @@ EMOJI_CATEGORIES = [
     ("📱", "📱 ស្កេន QR"),
     ("🎭", "🎭 Setup Emoji"),
     ("✏️", "✏️ កែ/បញ្ចូលព័ត៌មាន"),
-    ("🔗", "🔗 ណែនាំមិត្ត (Referral)"),
     ("🎉", "🎉 អបអរ/Bonus"),
     ("👤", "👤 អ្នកប្រើប្រាស់ម្នាក់"),
     ("📈", "📈 ស្ថិតិលក់ដាច់ / តម្លៃឡើង"),
@@ -571,31 +557,6 @@ def save_orders(d):
 
 
 # ------------------------------------------------------------------
-# BOT SUBSCRIPTION (ការជាវ Bot ផ្ទាល់ខ្លួន) — manual admin approval flow
-# ------------------------------------------------------------------
-def load_subs():
-    return _load(SUBS_FILE, {})
-
-
-def save_subs(d):
-    _save(SUBS_FILE, d)
-
-
-def get_sub(uid):
-    subs = load_subs()
-    return subs.get(str(uid))
-
-
-def set_sub(uid, **fields):
-    with _lock:
-        subs = load_subs()
-        rec = subs.get(str(uid), {})
-        rec.update(fields)
-        subs[str(uid)] = rec
-        save_subs(subs)
-        return rec
-
-
 # ------------------------------------------------------------------
 # MANUAL QR DEPOSIT (សម្រាប់ហាង/subscriber ដែលគ្មាន Bakong ID ផ្ទាល់ខ្លួន)
 # ------------------------------------------------------------------
@@ -667,153 +628,6 @@ def update_pending_deposit(dep_id, **fields):
         return rec
 
 
-# ------------------------------------------------------------------
-# BOT SUBSCRIPTION — auto-deploy engine (spawn subprocess ស្វ័យប្រវត្តិ)
-# ------------------------------------------------------------------
-SUBBOTS_DIR = os.path.join(DATA_DIR, "subscriber_bots")
-os.makedirs(SUBBOTS_DIR, exist_ok=True)
-
-
-def _sub_data_dir(uid):
-    d = os.path.join(SUBBOTS_DIR, str(uid))
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
-def _pid_alive(pid):
-    if not pid:
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, ValueError, TypeError):
-        return False
-    return True
-
-
-def stop_subscriber_bot(uid):
-    rec = get_sub(uid) or {}
-    pid = rec.get("process_pid")
-    if pid and _pid_alive(pid):
-        try:
-            os.kill(int(pid), signal.SIGTERM)
-        except Exception as e:
-            print(f"[stop_subscriber_bot] failed to kill pid {pid} for uid {uid}: {e}", flush=True)
-    set_sub(uid, process_pid=None)
-
-
-def deploy_subscriber_bot(uid, rec=None):
-    """Spawn ស្វ័យប្រវត្តិនូវ bot instance ផ្ទាល់ខ្លួនរបស់ subscriber (uid) ជា subprocess ដាច់ដោយឡែក"""
-    rec = rec or get_sub(uid) or {}
-    bot_token = rec.get("bot_token")
-    if not bot_token:
-        return False, "គ្មាន Bot Token ក្នុង record នេះទេ"
-    stop_subscriber_bot(uid)
-    data_dir = _sub_data_dir(uid)
-    env = os.environ.copy()
-    env["BOT_TOKEN"] = bot_token
-    env["ADMIN_ID"] = str(uid)
-    env["DATA_DIR"] = data_dir
-    env["CAMRAPIDPAY_API_KEY"] = rec.get("camrapidpay_api_key") or ""
-    env["NOTIFY_CHAT_IDS"] = ""
-    env["STORE_NAME"] = rec.get("store_name") or f"Shop #{uid}"
-    env["IS_SUBSCRIBER_BOT"] = "1"
-    script_path = os.path.abspath(__file__)
-    log_path = os.path.join(data_dir, "bot.log")
-    try:
-        log_f = open(log_path, "a")
-        proc = subprocess.Popen(
-            [sys.executable, script_path],
-            env=env,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            cwd=os.path.dirname(script_path),
-        )
-    except Exception as e:
-        return False, str(e)
-    expires_at = None
-    rental_days = rec.get("rental_days")
-    if rental_days:
-        now = time.time()
-        prev_expires = rec.get("expires_at")
-        base = prev_expires if (prev_expires and prev_expires > now) else now
-        expires_at = base + (int(rental_days) * 86400)
-    set_sub(
-        uid,
-        status="active",
-        activated_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-        process_pid=proc.pid,
-        process_data_dir=data_dir,
-        expires_at=expires_at,
-        expires_at_text=(time.strftime("%Y-%m-%d %H:%M", time.localtime(expires_at)) if expires_at else None),
-    )
-    return True, proc.pid
-
-
-def check_expired_subscriptions():
-    now = time.time()
-    subs = load_subs()
-    for uid_s, rec in subs.items():
-        if rec.get("status") != "active":
-            continue
-        expires_at = rec.get("expires_at")
-        if not expires_at or expires_at > now:
-            continue
-        uid = int(uid_s)
-        stop_subscriber_bot(uid)
-        set_sub(uid, status="expired")
-        try:
-            bot.send_message(
-                uid,
-                "⏰ <b>ការជួល Bot របស់អ្នកបានផុតកំណត់ហើយ</b>\n"
-                "Bot របស់អ្នកឥឡូវត្រូវបានបញ្ឈប់ (ទិន្នន័យ/ស្តុកនៅតែរក្សាទុកគ្រប់គ្រាន់)។\n"
-                "ចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ដើម្បីបន្តជួល ហើយ Bot នឹងចាប់ផ្តើមដំណើរការវិញភ្លាមៗ។",
-            )
-        except Exception as e:
-            print(f"[check_expired_subscriptions] failed to notify uid {uid}: {e}", flush=True)
-        try:
-            notify_public(f"⏰ <b>Bot ជួលបានផុតកំណត់</b>\n👤 User {uid} — bot ត្រូវបានបញ្ឈប់ស្វ័យប្រវត្តិ")
-        except Exception:
-            pass
-
-
-def start_expiry_checker(interval_sec=1800):
-    def _loop():
-        while True:
-            try:
-                check_expired_subscriptions()
-            except Exception as e:
-                print(f"[start_expiry_checker] error: {e}", flush=True)
-            time.sleep(interval_sec)
-    threading.Thread(target=_loop, daemon=True).start()
-
-
-# ------------------------------------------------------------------
-# BOT CONFIG (តម្លៃដែល Admin អាចកែបានផ្ទាល់ក្នុង Bot ដោយមិនចាំបាច់ redeploy)
-# ------------------------------------------------------------------
-CONFIG_FILE = os.path.join(DATA_DIR, "bot_config.json")
-
-
-def load_config():
-    return _load(CONFIG_FILE, {})
-
-
-def save_config(d):
-    _save(CONFIG_FILE, d)
-
-
-def get_rental_per_day():
-    return float(load_config().get("rental_per_day", BOT_RENTAL_PER_DAY_DEFAULT))
-
-
-def set_rental_per_day(value):
-    cfg = load_config()
-    cfg["rental_per_day"] = round(float(value), 4)
-    save_config(cfg)
-    return cfg["rental_per_day"]
-
-
 def get_user(uid):
     users = load_users()
     uid = str(uid)
@@ -821,9 +635,6 @@ def get_user(uid):
         users[uid] = {
             "balance": 0.0,
             "orders": 0,
-            "referred_by": None,
-            "ref_count": 0,
-            "ref_earned": 0.0,
             "joined_at": time.strftime("%Y-%m-%d"),
             "first_name": None,
             "last_name": None,
@@ -840,8 +651,7 @@ def touch_user_profile(uid, first_name=None, last_name=None, username=None):
         uid = str(uid)
         if uid not in users:
             users[uid] = {
-                "balance": 0.0, "orders": 0, "referred_by": None, "ref_count": 0,
-                "ref_earned": 0.0, "joined_at": time.strftime("%Y-%m-%d"),
+                "balance": 0.0, "orders": 0, "joined_at": time.strftime("%Y-%m-%d"),
                 "first_name": None, "last_name": None, "username": None, "last_seen": None,
             }
         u = users[uid]
@@ -856,22 +666,6 @@ def touch_user_profile(uid, first_name=None, last_name=None, username=None):
             u["joined_at"] = time.strftime("%Y-%m-%d")
         save_users(users)
         return u
-
-
-def credit_referral_commission(referred_uid, deposit_amount):
-    with _lock:
-        users = load_users()
-        u = users.get(str(referred_uid))
-        ref_uid = u.get("referred_by") if u else None
-        if not ref_uid or str(ref_uid) == str(referred_uid) or str(ref_uid) not in users:
-            return None, 0.0
-        bonus = round(deposit_amount * REFERRAL_PERCENT / 100.0, 2)
-        if bonus <= 0:
-            return None, 0.0
-        users[str(ref_uid)]["balance"] = round(users[str(ref_uid)].get("balance", 0.0) + bonus, 2)
-        users[str(ref_uid)]["ref_earned"] = round(users[str(ref_uid)].get("ref_earned", 0.0) + bonus, 2)
-        save_users(users)
-        return ref_uid, bonus
 
 
 def update_balance(uid, delta):
@@ -1278,17 +1072,6 @@ def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5
                 f"👤 {user_label or 'User'}\n"
                 f"💵 ${amount:.2f}"
             )
-            ref_uid, bonus = credit_referral_commission(uid, amount)
-            if ref_uid:
-                try:
-                    bot.send_message(
-                        int(ref_uid),
-                        f"🎉 <b>Referral Commission!</b>\n\n"
-                        f"👤 {user_label or 'អ្នកដែលអ្នកណែនាំ'} បានដាក់លុយ ${amount:.2f}\n"
-                        f"💵 អ្នកទទួលបាន <b>${bonus:.2f}</b> ({REFERRAL_PERCENT:.0f}%) ចូល wallet ស្វ័យប្រវត្តិ!",
-                    )
-                except Exception:
-                    pass
             return
         time.sleep(8)
     try:
@@ -1314,13 +1097,6 @@ def get_bot_username():
     return _bot_username_cache
 
 
-def referral_link_for(uid):
-    uname = get_bot_username()
-    if not uname:
-        return None
-    return f"https://t.me/{uname}?start=ref_{uid}"
-
-
 def is_admin(uid):
     return uid == ADMIN_ID
 
@@ -1328,14 +1104,11 @@ def is_admin(uid):
 def main_menu_kb():
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        pbtn("🛒 ទិញ Account", callback_data="menu_shop"),
+        pbtn("🛒 ទិញ Account", callback_data="menu_shop", style="success"),
         pbtn("💰 Wallet", callback_data="menu_wallet"),
     )
     kb.add(
         pbtn("📦 ការកម្មង់របស់ខ្ញុំ", callback_data="menu_orders"),
-        pbtn("🔗 ណែនាំមិត្ត (Referral)", callback_data="menu_referral"),
-    )
-    kb.add(
         pbtn("☎️ ទំនាក់ទំនង Admin", url="tg://user?id=%d" % ADMIN_ID),
     )
     return kb
@@ -1354,8 +1127,6 @@ def products_kb():
             label = f"× {icon} {p['name'].upper()} - អស់ស្តុក"
             btn = pbtn(label, callback_data=f"nostock_{key}", style="danger")
         kb.add(btn)
-    if not IS_SUBSCRIBER_BOT:
-        kb.add(pbtn(BTN_SUBSCRIBE, callback_data="menu_subscribe"))
     kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main"))
     return kb
 
@@ -1425,11 +1196,8 @@ BTN_SHOP = "🛒 ទិញ Account"
 BTN_WALLET = "💰 Wallet"
 BTN_DEPOSIT = "➕ បញ្ចូលលុយ"
 BTN_ORDERS = "📦 ការកម្មង់"
-BTN_REFERRAL = "🔗 ណែនាំមិត្ត"
 BTN_PROFILE = "👤 ប្រវត្តិរូប"
 BTN_HELP = "☎️ ជួយខ្ញុំផង"
-BTN_SUBSCRIBE = "🤖 ជាវ Bot ផ្ទាល់ខ្លួន"
-
 ADMIN_BTN_STATS = "📊 ស្ថិតិ"
 ADMIN_BTN_ADDPRODUCT = "➕ Product ថ្មី"
 ADMIN_BTN_ADDSTOCK = "📥 Stock ថ្មី"
@@ -1439,7 +1207,6 @@ ADMIN_BTN_EDITPRODUCT = "✏️ កែ Product"
 ADMIN_BTN_MSGUSER = "📨 ផ្ញើសារទៅ User"
 ADMIN_BTN_BROADCAST = "📢 ផ្ញើសារទៅគ្រប់គ្នា"
 ADMIN_BTN_EMOJI = "🎭 Setup Emoji"
-ADMIN_BTN_SUBPRICE = "💵 កែតម្លៃជួល Bot"
 ADMIN_BTN_SETQR = "🖼 កំណត់ QR ទូទាត់ដោយដៃ"
 
 
@@ -1449,52 +1216,22 @@ def reply_kb_for(uid):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add(BTN_SHOP)
     kb.add(BTN_WALLET, BTN_DEPOSIT)
-    kb.add(BTN_ORDERS, BTN_REFERRAL)
-    kb.add(BTN_PROFILE, BTN_HELP)
-    if not IS_SUBSCRIBER_BOT:
-        kb.add(BTN_SUBSCRIBE)
+    kb.add(BTN_ORDERS, BTN_PROFILE)
+    kb.add(BTN_HELP)
     if is_admin(uid):
         kb.add(ADMIN_BTN_STATS, ADMIN_BTN_ADDPRODUCT)
         kb.add(ADMIN_BTN_ADDSTOCK, ADMIN_BTN_DELSTOCK)
         kb.add(ADMIN_BTN_DELPRODUCT, ADMIN_BTN_EDITPRODUCT)
         kb.add(ADMIN_BTN_MSGUSER, ADMIN_BTN_BROADCAST)
-        kb.add(ADMIN_BTN_EMOJI, ADMIN_BTN_SUBPRICE)
-        kb.add(ADMIN_BTN_SETQR)
+        kb.add(ADMIN_BTN_EMOJI, ADMIN_BTN_SETQR)
     return kb
 
 
 # ------------------------------------------------------------------
 # USER COMMANDS
 # ------------------------------------------------------------------
-def _link_referral_if_new(message):
-    uid = message.from_user.id
-    users = load_users()
-    is_new = str(uid) not in users
-    parts = (message.text or "").split(maxsplit=1)
-    payload = parts[1].strip() if len(parts) > 1 else ""
-    if is_new and payload.startswith("ref_"):
-        try:
-            ref_uid = int(payload[len("ref_"):])
-        except ValueError:
-            ref_uid = None
-        if ref_uid and ref_uid != uid and str(ref_uid) in users:
-            with _lock:
-                users = load_users()
-                users[str(uid)] = {
-                    "balance": 0.0, "orders": 0,
-                    "referred_by": str(ref_uid), "ref_count": 0, "ref_earned": 0.0,
-                }
-                users[str(ref_uid)]["ref_count"] = users[str(ref_uid)].get("ref_count", 0) + 1
-                save_users(users)
-            try:
-                bot.send_message(ref_uid, f"👥 មានមិត្តភ័ក្តិម្នាក់ចូលរួមតាមរយៈ referral link របស់អ្នក!")
-            except Exception:
-                pass
-
-
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
-    _link_referral_if_new(message)
     get_user(message.from_user.id)
     touch_user_profile(
         message.from_user.id,
@@ -1508,7 +1245,7 @@ def cmd_start(message):
         f"យើងខ្ញុំជាកន្លែងទិញ account premium ដូចជា ChatGPT, Netflix, Spotify, "
         f"Office 365, Canva... <b>ដឹកជញ្ជូនភ្លាមៗ</b> ក្រោយទូទាត់ដោយ KHQR ០សុវត្ថិភាព។\n\n"
         f"👉 ប្រើប៊ូតុងខាងក្រោមអេក្រង់៖ 🛒 ទិញ Account, 💰 Wallet, ➕ បញ្ចូលលុយ, "
-        f"📦 ការកម្មង់, 🔗 ណែនាំមិត្ត ។ល។\n\n"
+        f"📦 ការកម្មង់ ។ល។\n\n"
         f"✨ <i>ព័ត៌មានជំនួយ:</i> ត្រូវបញ្ចូលលុយចូល Wallet សិន រួចជ្រើសរើសទិញបាន — account ផ្ញើមកភ្លាមៗដោយស្វ័យប្រវត្តិ!\n"
         f"🙏 អរគុណដែលទុកចិត្ត {STORE_NAME}"
     )
@@ -1584,25 +1321,6 @@ def reply_orders(message):
     bot.send_message(message.chat.id, "📦 ការកម្មង់ចុងក្រោយ:\n" + "\n".join(lines))
 
 
-def referral_info_text(uid):
-    u = get_user(uid)
-    link = referral_link_for(uid)
-    link_line = f"🔗 <code>{link}</code>" if link else "🔗 (Bot username មិនទាន់ត្រៀមរួច សូមព្យាយាមម្តងទៀត)"
-    return (
-        f"🔗 <b>ណែនាំមិត្ត — ទទួល {REFERRAL_PERCENT:.0f}% ជារៀងរហូត!</b>\n\n"
-        f"ចែក link ខាងក្រោមទៅមិត្តភ័ក្តិ។ រាល់ពេលគេដាក់លុយចូល wallet "
-        f"(មិនកំណត់ចំនួនដង) អ្នកទទួលបាន {REFERRAL_PERCENT:.0f}% ចូល wallet ស្វ័យប្រវត្តិ!\n\n"
-        f"{link_line}\n\n"
-        f"👥 អ្នកបានណែនាំ: <b>{u.get('ref_count', 0)} នាក់</b>\n"
-        f"💵 Commission ទទួលបានសរុប: <b>${u.get('ref_earned', 0.0):.2f}</b>"
-    )
-
-
-@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(BTN_REFERRAL))
-def reply_referral(message):
-    bot.send_message(message.chat.id, referral_info_text(message.from_user.id))
-
-
 @bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(BTN_PROFILE))
 def reply_profile(message):
     u = get_user(message.from_user.id)
@@ -1611,286 +1329,6 @@ def reply_profile(message):
         f"👤 <b>ប្រវត្តិរូបរបស់អ្នក</b>\nID: <code>{message.from_user.id}</code>\n"
         f"💰 សមតុល្យ: ${u.get('balance', 0.0):.2f}\nការកម្មង់: {u.get('orders', 0)}",
     )
-
-
-def subscribe_intro_text():
-    return (
-        f"🤖 <b>ជាវ Bot ផ្ទាល់ខ្លួន</b>\n\n"
-        f"សូមផ្ញើ <b>Token Bot</b> របស់អ្នក (យកពី @BotFather) ដែលចង់ដាក់ដំណើរការ:\n"
-        f"ឧទាហរណ៍: <code>123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>"
-    )
-
-
-def subscribe_choice_kb():
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(pbtn("✅ មាន Bakong ID", callback_data="sub_yes", style="success"))
-    kb.add(pbtn("❌ អត់មាន Bakong ID", callback_data="sub_no"))
-    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main"))
-    return kb
-
-
-@bot.message_handler(commands=["subscribe"])
-@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(BTN_SUBSCRIBE))
-def reply_subscribe(message):
-    if IS_SUBSCRIBER_BOT:
-        return
-    msg = bot.send_message(message.chat.id, subscribe_intro_text())
-    bot.register_next_step_handler(msg, subscribe_token_step, message.from_user)
-
-
-def _looks_like_bot_token(text):
-    return bool(re.match(r"^\d{6,}:[A-Za-z0-9_-]{20,}$", (text or "").strip()))
-
-
-def subscribe_token_step(message, from_user):
-    uid = from_user.id
-    chat_id = message.chat.id
-    token = (message.text or "").strip()
-    if not _looks_like_bot_token(token):
-        msg = bot.send_message(
-            chat_id,
-            "❌ Token មិនត្រឹមត្រូវទេ (ត្រូវជា Token ពី @BotFather ដូចជា "
-            "<code>123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>)\n\nសូមផ្ញើម្តងទៀត:",
-        )
-        bot.register_next_step_handler(msg, subscribe_token_step, from_user)
-        return
-    set_sub(
-        uid,
-        status="collecting_store_name",
-        bot_token=token,
-        store_name=None,
-        bakong_id=None,
-        rental_days=None,
-        amount_paid=None,
-        requested_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-        activated_at=None,
-        requester_label=public_user_label(from_user),
-    )
-    msg = bot.send_message(
-        chat_id,
-        "✅ បានទទួល Token រួចហើយ។\n\n"
-        "🏪 សូមវាយបញ្ចូល <b>ឈ្មោះហាង</b> ដែលអ្នកចង់ដាក់ (ឧ. Dara Store) — "
-        "ឈ្មោះនេះនឹងបង្ហាញក្នុង Bot របស់អ្នកផ្ទាល់:",
-    )
-    bot.register_next_step_handler(msg, subscribe_storename_step, from_user)
-
-
-def subscribe_storename_step(message, from_user):
-    uid = from_user.id
-    chat_id = message.chat.id
-    store_name = (message.text or "").strip()
-    if not store_name or store_name.startswith("/") or len(store_name) > 40:
-        msg = bot.send_message(
-            chat_id,
-            "❌ ឈ្មោះហាងមិនត្រឹមត្រូវទេ (មិនអាចទទេ ឬលើសពី 40 តួអក្សរ) សូមវាយបញ្ចូលម្តងទៀត:",
-        )
-        bot.register_next_step_handler(msg, subscribe_storename_step, from_user)
-        return
-    rec = get_sub(uid) or {}
-    if not rec.get("bot_token"):
-        bot.send_message(chat_id, "❌ រកមិនឃើញ Token ដែលបានផ្ញើមុននេះទេ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត")
-        return
-    set_sub(uid, status="collecting_bakong_choice", store_name=store_name)
-    bot.send_message(
-        chat_id,
-        f"✅ ឈ្មោះហាង: <b>{html.escape(store_name)}</b>\n\n"
-        "តើអ្នកមាន <b>Bakong ID</b> ផ្ទាល់ខ្លួនសម្រាប់ទទួលទូទាត់ក្នុង Bot នេះទេ?\n"
-        "• មាន → បំពេញ Bakong ID (Admin នឹងបំពេញ API CamRapidPay ជូន ដើម្បីបង្កើត QR ស្វ័យប្រវត្តិ)\n"
-        "• អត់មាន → ផ្ញើរូបភាព QR ផ្ទាល់ខ្លួន រួចជួលដំណើរការគិតជាថ្ងៃ "
-        f"(${get_rental_per_day():.2f}/ថ្ងៃ) បង់ពី Wallet",
-        reply_markup=subscribe_choice_kb(),
-    )
-
-
-def subscribe_bakong_id_step(message, from_user):
-    uid = from_user.id
-    chat_id = message.chat.id
-    bakong_id = (message.text or "").strip()
-    if not bakong_id or bakong_id.startswith("/"):
-        bot.send_message(chat_id, "❌ Bakong ID មិនត្រឹមត្រូវទេ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត")
-        return
-    rec = get_sub(uid) or {}
-    if not rec.get("bot_token"):
-        bot.send_message(chat_id, "❌ រកមិនឃើញ Token ដែលបានផ្ញើមុននេះទេ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត")
-        return
-    set_sub(uid, bakong_id=bakong_id, qr_photo_file_id=None)
-    msg = bot.send_message(
-        chat_id,
-        "✅ បានទទួល Bakong ID របស់អ្នករួចហើយ។\n\n"
-        f"📅 សូមវាយបញ្ចូល <b>ចំនួនថ្ងៃ</b> ដែលអ្នកចង់ជួល (${get_rental_per_day():.2f}/ថ្ងៃ, ឧ. 30):",
-    )
-    bot.register_next_step_handler(msg, subscribe_days_step, from_user)
-
-
-def subscribe_qr_photo_step(message, from_user):
-    uid = from_user.id
-    chat_id = message.chat.id
-    if not message.photo:
-        msg = bot.send_message(chat_id, "❌ សូមផ្ញើជា <b>រូបភាព (Photo)</b> នៃ QR របស់អ្នក មិនមែនឯកសារ/អត្ថបទទេ សូមផ្ញើម្តងទៀត:")
-        bot.register_next_step_handler(msg, subscribe_qr_photo_step, from_user)
-        return
-    rec = get_sub(uid) or {}
-    if not rec.get("bot_token"):
-        bot.send_message(chat_id, "❌ រកមិនឃើញ Token ដែលបានផ្ញើមុននេះទេ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត")
-        return
-    qr_file_id = message.photo[-1].file_id
-    set_sub(uid, qr_photo_file_id=qr_file_id, bakong_id=None)
-    msg = bot.send_message(
-        chat_id,
-        f"✅ បានទទួលរូបភាព QR របស់អ្នករួចហើយ។\n\n"
-        f"📅 សូមវាយបញ្ចូល <b>ចំនួនថ្ងៃ</b> ដែលអ្នកចង់ជួល (${get_rental_per_day():.2f}/ថ្ងៃ, ឧ. 30):",
-    )
-    bot.register_next_step_handler(msg, subscribe_days_step, from_user)
-
-
-def subscribe_days_step(message, from_user):
-    uid = from_user.id
-    chat_id = message.chat.id
-    raw = (message.text or "").strip()
-    if not raw.isdigit() or int(raw) <= 0:
-        msg = bot.send_message(chat_id, "❌ សូមវាយបញ្ចូលជាចំនួនថ្ងៃ (ឧ. 30):")
-        bot.register_next_step_handler(msg, subscribe_days_step, from_user)
-        return
-    days = int(raw)
-    total = round(days * get_rental_per_day(), 2)
-    rec = get_sub(uid) or {}
-    if not rec.get("bot_token"):
-        bot.send_message(chat_id, "❌ រកមិនឃើញ Token ដែលបានផ្ញើមុននេះទេ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត")
-        return
-    set_sub(uid, status="waiting_payment", rental_days=days, amount_paid=total)
-    handle_sub_payment_auto(uid, chat_id, days, total, from_user)
-
-
-def handle_sub_payment_auto(uid, chat_id, days, total, from_user):
-    def _fail(err_text):
-        retry_kb = types.InlineKeyboardMarkup()
-        retry_kb.add(types.InlineKeyboardButton(
-            "🔁 ព្យាយាមម្តងទៀត", callback_data=f"subpay_retry_{uid}"
-        ))
-        bot.send_message(chat_id, f"{err_text}\n\nសូមព្យាយាមម្តងទៀត បើ error នៅតែកើតឡើង ជា server ខាង gateway ខ្លួនឯងគាំង (មិនមែនកូដឯង)។", reply_markup=retry_kb)
-
-    ref = f"KZSUB{uid}{int(time.time())}"[:50]
-    ref_disp = f"SUB-{hashlib.md5(ref.encode()).hexdigest()[:8].upper()}"
-
-    caption = (
-        f"🤖 ថ្លៃជួល Bot <b>${total:.2f}</b> ({days} ថ្ងៃ)\n💳 វិធីទូទាត់: <b>Bakong KHQR</b>\n🔖 <code>{ref_disp}</code>\n\n"
-        f"📱 សូម Scan QR ខាងក្រោម (ឬចុចប៊ូតុងទំព័រទូទាត់) ដើម្បីទូទាត់\n"
-        f"✅ ប្រព័ន្ធនឹង detect ស្វ័យប្រវត្តិ (មិនចាំបាច់ផ្ញើ receipt ទេ)\n⏳ QR ផុតកំណត់ក្នុង ~5-10 នាទី"
-    )
-
-    data = camrapid_create(total, ref)
-    if not data:
-        _fail(f"❌ មិនអាចបង្កើត QR បានទេ (Bakong KHQR)\n\nមូលហេតុ:\n{_last_camrapid_error[:180]}")
-        return
-
-    qr_string = data.get("qr_code", "")
-    payment_url = data.get("payment_url", "")
-
-    kb = None
-    if payment_url:
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔗 បើកទំព័រទូទាត់", url=payment_url))
-
-    img_buf = build_qr_image(
-        qr_string, amount=total, ref=ref_disp,
-        label="Bot Rental", subtitle=f"{STORE_NAME} · Bakong KHQR",
-    ) if qr_string else None
-    photo = img_buf or None
-
-    if photo:
-        bot.send_photo(chat_id, photo, caption=caption, reply_markup=kb)
-    elif payment_url:
-        bot.send_message(chat_id, caption, reply_markup=kb)
-    else:
-        _fail("❌ គ្មានទិន្នន័យ QR ត្រឡប់មកទេ សូមព្យាយាមម្តងទៀត")
-        return
-
-    t = threading.Thread(
-        target=poll_sub_payment_auto,
-        args=(uid, chat_id, ref, days, total, from_user),
-        daemon=True,
-    )
-    t.start()
-
-
-def poll_sub_payment_auto(uid, chat_id, reference, days, total, from_user, max_minutes=10, checker=None):
-    checker = checker or camrapid_check
-    deadline = time.time() + max_minutes * 60
-    while time.time() < deadline:
-        if checker(reference):
-            rec = get_sub(uid) or {}
-            set_sub(uid, status="waiting_admin_deploy", rental_days=days, amount_paid=total)
-            try:
-                bot.send_message(
-                    chat_id,
-                    f"✅ ការទូទាត់ជោគជ័យ! <b>${total:.2f}</b> ({days} ថ្ងៃ)\n"
-                    f"⏳ សូមរង់ចាំ Admin ដាក់ Bot ឲ្យអ្នកដំណើរការ — bot នឹងជូនដំណឹងភ្លាមៗពេលរួចរាល់។",
-                )
-            except Exception:
-                pass
-            _notify_admin_new_sub(
-                uid, rec.get("requester_label") or public_user_label(from_user), rec.get("bot_token"),
-                store_name=rec.get("store_name"), bakong_id=rec.get("bakong_id"),
-                rental_days=days, amount_paid=total, qr_photo_file_id=rec.get("qr_photo_file_id"),
-            )
-            return
-        time.sleep(8)
-    try:
-        bot.send_message(chat_id, "⌛ QR ផុតកំណត់ ឬមិនទាន់ទូទាត់។ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត ដើម្បីព្យាយាមថ្មី")
-    except Exception:
-        pass
-
-
-def admin_subdeploy_apikey_step(message, target_uid):
-    if not is_admin(message.from_user.id):
-        return
-    api_key = (message.text or "").strip()
-    if not api_key or api_key.startswith("/"):
-        msg = bot.send_message(message.chat.id, "❌ សូមផ្ញើ CAMRAPIDPAY_API_KEY ត្រឹមត្រូវ:")
-        bot.register_next_step_handler(msg, admin_subdeploy_apikey_step, target_uid)
-        return
-    set_sub(target_uid, camrapidpay_api_key=api_key)
-    ok, info = deploy_subscriber_bot(target_uid, get_sub(target_uid))
-    if not ok:
-        bot.send_message(message.chat.id, f"❌ Deploy បរាជ័យសម្រាប់ user {target_uid}: {info}")
-        return
-    bot.send_message(message.chat.id, f"✅ Bot user <code>{target_uid}</code> កំពុងដំណើរការ (PID {info})")
-    try:
-        bot.send_message(
-            target_uid,
-            "🎉 <b>Bot ជួលរបស់អ្នកដំណើរការរួចរាល់!</b>\nសូមចូលទៅកាន់ Bot របស់អ្នកបាន។",
-        )
-    except Exception as e:
-        print(f"[admin_subdeploy_apikey_step] failed to notify user: {e}", flush=True)
-
-
-def _notify_admin_new_sub(uid, user_label, bot_token, store_name=None, bakong_id=None, rental_days=None, amount_paid=None, qr_photo_file_id=None):
-    lines = [
-        "🤖 <b>សំណើជាវ Bot ថ្មី!</b>",
-        "",
-        f"👤 User: {user_label or 'User'} (<code>{uid}</code>)",
-        f"🏪 ឈ្មោះហាង: <b>{html.escape(store_name or '')}</b>",
-        f"🔑 Bot Token: <code>{html.escape(bot_token or '')}</code>",
-    ]
-    if bakong_id:
-        lines.append(f"🏦 Bakong ID ខ្លួនឯង: <code>{html.escape(bakong_id)}</code>")
-        lines.append("\n👉 សូមបំពេញ <b>API CamRapidPay</b> ជូន user នេះ ដើម្បីឲ្យ Bot បង្កើត QR ស្វ័យប្រវត្តិកើត។")
-    if rental_days:
-        lines.append(f"📅 ជួល: {rental_days} ថ្ងៃ (បង់រួច ${amount_paid:.2f})")
-        if qr_photo_file_id:
-            lines.append("🖼 (QR ផ្ទាល់ខ្លួនរបស់ user ភ្ជាប់មកជាមួយខាងក្រោម)")
-    lines.append("\nចុចប៊ូតុងខាងក្រោម បន្ទាប់ពីដាក់ Bot ដំណើរការជូន user រួចរាល់:")
-    admin_kb = types.InlineKeyboardMarkup()
-    admin_kb.add(types.InlineKeyboardButton(
-        "✅ បានដាក់ Bot ជូនរួចរាល់", callback_data=f"subdeploy_{uid}",
-    ))
-    try:
-        if qr_photo_file_id:
-            bot.send_photo(ADMIN_ID, qr_photo_file_id, caption="\n".join(lines), reply_markup=admin_kb)
-        else:
-            bot.send_message(ADMIN_ID, "\n".join(lines), reply_markup=admin_kb)
-    except Exception as e:
-        print(f"[_notify_admin_new_sub] failed to notify admin: {e}", flush=True)
 
 
 @bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(BTN_HELP))
@@ -2194,82 +1632,10 @@ def callback_router(call):
             chat_id, call.message.message_id, reply_markup=main_menu_kb(),
         )
 
-    elif data == "menu_referral":
-        bot.edit_message_text(
-            referral_info_text(uid),
-            chat_id, call.message.message_id, reply_markup=main_menu_kb(),
-        )
-
     elif data == "back_main":
         bot.edit_message_text(
             "🏠 ម៉ឺនុយចម្បង:", chat_id, call.message.message_id, reply_markup=main_menu_kb(),
         )
-
-    elif data == "menu_subscribe":
-        if IS_SUBSCRIBER_BOT:
-            bot.answer_callback_query(call.id)
-            return
-        msg = bot.send_message(chat_id, subscribe_intro_text())
-        bot.register_next_step_handler(msg, subscribe_token_step, call.from_user)
-
-    elif data == "sub_yes":
-        msg = bot.send_message(
-            chat_id,
-            "🏦 សូមវាយបញ្ចូល <b>Bakong ID</b> ផ្ទាល់ខ្លួនរបស់អ្នក (ឧ. yourname@bkrt):",
-        )
-        bot.register_next_step_handler(msg, subscribe_bakong_id_step, call.from_user)
-
-    elif data == "sub_no":
-        msg = bot.send_message(
-            chat_id,
-            "🖼 សូមផ្ញើ <b>រូបភាព QR</b> ផ្ទាល់ខ្លួនរបស់អ្នក (screenshot ពី App ធនាគារ/Bakong):",
-        )
-        bot.register_next_step_handler(msg, subscribe_qr_photo_step, call.from_user)
-
-    elif data.startswith("subpay_retry_"):
-        target_uid = int(data[len("subpay_retry_"):])
-        if target_uid != uid:
-            bot.answer_callback_query(call.id)
-            return
-        rec = get_sub(uid) or {}
-        days = rec.get("rental_days")
-        total = rec.get("amount_paid")
-        if not days or not total:
-            bot.answer_callback_query(call.id, "❌ រកមិនឃើញព័ត៌មានជួលទេ សូមចុច 🤖 ជាវ Bot ផ្ទាល់ខ្លួន ម្តងទៀត", show_alert=True)
-            return
-        bot.answer_callback_query(call.id)
-        handle_sub_payment_auto(uid, chat_id, days, total, call.from_user)
-
-    elif data.startswith("subdeploy_"):
-        if not is_admin(uid):
-            bot.answer_callback_query(call.id)
-            return
-        target_uid = int(data[len("subdeploy_"):])
-        rec = get_sub(target_uid) or {}
-        if rec.get("bakong_id") and not rec.get("camrapidpay_api_key"):
-            bot.answer_callback_query(call.id)
-            msg = bot.send_message(
-                call.message.chat.id,
-                f"🔑 User <code>{target_uid}</code> មាន Bakong ID ផ្ទាល់ខ្លួន "
-                f"(<code>{html.escape(rec.get('bakong_id',''))}</code>)។\n"
-                f"សូមផ្ញើ <b>CAMRAPIDPAY_API_KEY</b> ដែលបានបង្កើតឲ្យគាត់រួច ដើម្បីឲ្យ bot deploy ស្វ័យប្រវត្តិ:",
-            )
-            bot.register_next_step_handler(msg, admin_subdeploy_apikey_step, target_uid)
-            return
-        ok, info = deploy_subscriber_bot(target_uid, rec)
-        if ok:
-            bot.answer_callback_query(call.id, "✅ បាន Deploy ស្វ័យប្រវត្តិ")
-        else:
-            bot.answer_callback_query(call.id, "❌ Deploy បរាជ័យ")
-            bot.send_message(call.message.chat.id, f"❌ Deploy បរាជ័យសម្រាប់ user {target_uid}: {info}")
-            return
-        try:
-            bot.send_message(
-                target_uid,
-                "🎉 <b>Bot ជួលរបស់អ្នកដំណើរការរួចរាល់!</b>\nសូមចូលទៅកាន់ Bot របស់អ្នកបាន។",
-            )
-        except Exception as e:
-            print(f"[subdeploy_] failed to notify user: {e}", flush=True)
 
     elif data.startswith("buyopt_"):
         product_key = data.split("_", 1)[1]
@@ -2754,17 +2120,6 @@ def _handle_deposit_approve(call, dep_id):
     except Exception:
         pass
     notify_public(f"💰 <b>Deposit ជោគជ័យ!</b>\n👤 User {uid}\n💵 ${amount:.2f}")
-    ref_uid, bonus = credit_referral_commission(uid, amount)
-    if ref_uid:
-        try:
-            bot.send_message(
-                int(ref_uid),
-                f"🎉 <b>Referral Commission!</b>\n\n"
-                f"👤 អ្នកដែលអ្នកណែនាំ បានដាក់លុយ ${amount:.2f}\n"
-                f"💵 អ្នកទទួលបាន <b>${bonus:.2f}</b> ({REFERRAL_PERCENT:.0f}%) ចូល wallet ស្វ័យប្រវត្តិ!",
-            )
-        except Exception:
-            pass
     bot.answer_callback_query(call.id, "✅ បានបញ្ជាក់ ហើយបញ្ចូលលុយចូល Wallet ជូនរួចរាល់")
     try:
         new_caption = (call.message.caption or "") + "\n\n✅ <b>បានបញ្ជាក់រួចរាល់</b>"
@@ -3110,122 +2465,6 @@ def cmd_addbalance(message):
         bot.reply_to(message, "ទំរង់ត្រូវជា:\n/addbalance user_id|amount\nឧ. /addbalance 123456789|10")
 
 
-@bot.message_handler(commands=["activatesub"])
-def cmd_activatesub(message):
-    if not is_admin(message.from_user.id):
-        return
-    try:
-        _, rest = message.text.split(" ", 1)
-        parts = rest.strip().split("|", 1)
-        target_uid = int(parts[0].strip())
-        rec = get_sub(target_uid) or {}
-        if len(parts) > 1 and parts[1].strip():
-            set_sub(target_uid, camrapidpay_api_key=parts[1].strip())
-            rec = get_sub(target_uid)
-        ok, info = deploy_subscriber_bot(target_uid, rec)
-        if not ok:
-            bot.reply_to(message, f"❌ Deploy បរាជ័យ: {info}")
-            return
-        bot.reply_to(message, f"✅ Deploy user {target_uid} រួចរាល់ (PID {info})។")
-        bot.send_message(
-            target_uid,
-            "🎉 <b>Bot ជួលរបស់អ្នកដំណើរការរួចរាល់!</b>\nសូមចូលទៅកាន់ Bot របស់អ្នកបាន។",
-        )
-    except Exception:
-        bot.reply_to(message, "ទំរង់ត្រូវជា:\n/activatesub user_id\nឬ /activatesub user_id|camrapidpay_api_key")
-
-
-@bot.message_handler(commands=["stopsub"])
-def cmd_stopsub(message):
-    if not is_admin(message.from_user.id):
-        return
-    try:
-        _, target_uid_s = message.text.split(" ", 1)
-        target_uid = int(target_uid_s.strip())
-        stop_subscriber_bot(target_uid)
-        bot.reply_to(message, f"🛑 បានបញ្ឈប់ Bot user {target_uid} រួចរាល់។")
-    except Exception:
-        bot.reply_to(message, "ទំរង់ត្រូវជា:\n/stopsub user_id")
-
-
-@bot.message_handler(commands=["subs"])
-def cmd_subs(message):
-    if not is_admin(message.from_user.id):
-        return
-    subs = load_subs()
-    pending = {uid: s for uid, s in subs.items() if s.get("status") == "waiting_admin_deploy"}
-    active = {uid: s for uid, s in subs.items() if s.get("status") == "active"}
-    lines = []
-    if pending:
-        lines.append("⏳ <b>សំណើជាវ Bot កំពុងរង់ចាំ:</b>")
-        for uid, s in pending.items():
-            tag = (
-                f"🏦 {s.get('bakong_id')}" if s.get("bakong_id")
-                else f"📅 {s.get('rental_days')} ថ្ងៃ (${s.get('amount_paid', 0):.2f})"
-                + (" 🖼QR" if s.get("qr_photo_file_id") else "")
-            )
-            lines.append(
-                f"• <code>{uid}</code> — 🏪 {html.escape(s.get('store_name') or '(គ្មានឈ្មោះ)')} — {tag}\n"
-                f"  🔑 <code>{html.escape(s.get('bot_token', ''))}</code> — {s.get('requested_at', '')}"
-            )
-    if active:
-        if lines:
-            lines.append("")
-        lines.append("🟢 <b>Bot Active:</b>")
-        for uid, s in active.items():
-            running = _pid_alive(s.get("process_pid"))
-            status_icon = "🟢 កំពុងរត់" if running else "🔴 process ស្លាប់ (សូម /activatesub redeploy)"
-            exp_txt = s.get("expires_at_text")
-            exp_tag = f" — ⏰ ផុតកំណត់ {exp_txt}" if exp_txt else " — ♾️ គ្មានកំណត់ (Bakong ខ្លួនឯង)"
-            lines.append(
-                f"• <code>{uid}</code> — 🏪 {html.escape(s.get('store_name') or '(គ្មានឈ្មោះ)')} "
-                f"— PID {s.get('process_pid')} — {status_icon}{exp_tag}"
-            )
-    if not lines:
-        bot.reply_to(message, "✅ គ្មានសំណើ ឬ Bot active ណាមួយទេ")
-        return
-    bot.reply_to(message, "\n".join(lines))
-
-
-@bot.message_handler(commands=["setrentalprice"])
-def cmd_setrentalprice(message):
-    if not is_admin(message.from_user.id) or IS_SUBSCRIBER_BOT:
-        return
-    try:
-        _, price_s = message.text.split(" ", 1)
-        new_price = set_rental_per_day(price_s.strip())
-        bot.reply_to(message, f"✅ តម្លៃជួល Bot ថ្មី: <b>${new_price:.2f}</b>/ថ្ងៃ")
-    except Exception:
-        bot.reply_to(message, f"ទំរង់ត្រូវជា:\n/setrentalprice 0.15\n\nតម្លៃបច្ចុប្បន្ន: ${get_rental_per_day():.2f}/ថ្ងៃ")
-
-
-@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_SUBPRICE))
-def reply_admin_subprice(message):
-    if not is_admin(message.from_user.id) or IS_SUBSCRIBER_BOT:
-        return
-    msg = bot.send_message(
-        message.chat.id,
-        f"💵 តម្លៃជួល Bot បច្ចុប្បន្ន: <b>${get_rental_per_day():.2f}</b>/ថ្ងៃ\n\nសូមវាយបញ្ចូលតម្លៃថ្មី (ឧ. 0.15):",
-    )
-    bot.register_next_step_handler(msg, admin_setrentalprice_step)
-
-
-def admin_setrentalprice_step(message):
-    if not is_admin(message.from_user.id):
-        return
-    raw = (message.text or "").strip().replace("$", "")
-    try:
-        value = float(raw)
-        if value <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        msg = bot.send_message(message.chat.id, "❌ សូមវាយបញ្ចូលជាលេខវិជ្ជមាន (ឧ. 0.15) សូមព្យាយាមម្តងទៀត:")
-        bot.register_next_step_handler(msg, admin_setrentalprice_step)
-        return
-    new_price = set_rental_per_day(value)
-    bot.send_message(message.chat.id, f"✅ តម្លៃជួល Bot ថ្មី: <b>${new_price:.2f}</b>/ថ្ងៃ")
-
-
 @bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_SETQR))
 def reply_admin_setqr(message):
     if not is_admin(message.from_user.id):
@@ -3314,7 +2553,5 @@ if __name__ == "__main__":
     if not BOT_TOKEN:
         raise SystemExit("❌ សូម set environment variable BOT_TOKEN ជាមុនសិន")
     start_keep_alive()
-    if not IS_SUBSCRIBER_BOT:
-        start_expiry_checker()  # ត្រួតពិនិត្យ subscription ជួល Bot ដែលផុតកំណត់ រាល់ 30 នាទី
     print("🤖 Bot កំពុងដំណើរការ...")
     bot.infinity_polling(skip_pending=True)
