@@ -252,10 +252,19 @@ def _strip_glyph(text, glyph):
     return cleaned if cleaned else text
 
 
+_pbtn_debug = {"last_reason": None, "icon_attempted": 0, "icon_sent": 0}
+
+
 def pbtn(text, callback_data=None, style=None, url=None, **kw):
     """InlineKeyboardButton ជាមួយ icon premium (បើមាន) + style ពណ៌ (Bot API 9.4:
     success/danger)។ សាកល្បង style/icon_custom_emoji_id មុន បើ library ចាស់មិនស្គាល់
-    នឹង fallback ទៅប៊ូតុងធម្មតាវិញ ដើម្បីកុំឲ្យ bot crash។"""
+    នឹង fallback ទៅប៊ូតុងធម្មតាវិញ ដើម្បីកុំឲ្យ bot crash។
+    ចំណាំ: TypeError ត្រង់នេះមានន័យថា library pyTelegramBotAPI ចាស់ពេក (មិនស្គាល់
+    argument icon_custom_emoji_id/style ថ្មីនៅឡើយ) — ត្រូវ pip install -U pyTelegramBotAPI។
+    ចំណែក Telegram បដិសេធ icon (server-side, មិនមែន TypeError) បើ owner របស់ bot
+    (គណនីដែលបង្កើត bot តាម @BotFather) មិនមាន Telegram Premium សកម្ម — ករណីនេះ
+    Telegram នឹងច្រានចោល icon_custom_emoji_id ស្ងាត់ៗ (មិន error) ឬធ្វើឲ្យទាំង
+    request បរាជ័យ អាស្រ័យលើ library។"""
     glyph, icon_id = emoji_icon_for(text)
     clean_text = _strip_glyph(text, glyph) if glyph else text
     attempts = []
@@ -265,13 +274,48 @@ def pbtn(text, callback_data=None, style=None, url=None, **kw):
         attempts.append({"icon_custom_emoji_id": icon_id})
     if style:
         attempts.append({"style": style})
+    if icon_id:
+        _pbtn_debug["icon_attempted"] += 1
     for extra in attempts:
         use_text = clean_text if "icon_custom_emoji_id" in extra else text
         try:
-            return types.InlineKeyboardButton(use_text, callback_data=callback_data, url=url, **extra, **kw)
-        except TypeError:
+            btn = types.InlineKeyboardButton(use_text, callback_data=callback_data, url=url, **extra, **kw)
+            if "icon_custom_emoji_id" in extra:
+                _pbtn_debug["icon_sent"] += 1
+                _pbtn_debug["last_reason"] = "ok"
+            return btn
+        except TypeError as e:
+            _pbtn_debug["last_reason"] = f"TypeError (library ចាស់ពេក, មិនស្គាល់ {list(extra.keys())}): {e}"
+            print(f"[pbtn] {_pbtn_debug['last_reason']}", flush=True)
             continue
     return types.InlineKeyboardButton(text, callback_data=callback_data, url=url, **kw)
+
+
+@bot.message_handler(commands=["checkemoji"])
+def cmd_checkemoji(message):
+    """Diagnostic command សម្រាប់ admin — មើលថាហេតុអ្វី icon premium មិនបង្ហាញលើ button។"""
+    if not is_admin(message.from_user.id):
+        return
+    tb_version = getattr(telebot, "__version__", "មិនស្គាល់")
+    m = get_emoji_map()
+    lines = [
+        "🔎 <b>Checkemoji Diagnostic</b>",
+        f"📦 pyTelegramBotAPI version: <code>{tb_version}</code>",
+        f"🎭 Glyph ដែលបានកំណត់ icon premium: {len(m)}",
+        f"🔁 pbtn() ព្យាយាមភ្ជាប់ icon: {_pbtn_debug['icon_attempted']} ដង, ជោគជ័យ (library level): {_pbtn_debug['icon_sent']} ដង",
+        f"📝 មូលហេតុចុងក្រោយ: <code>{html.escape(str(_pbtn_debug['last_reason']))}</code>",
+        "",
+        "⚠️ <b>លក្ខខណ្ឌចាំបាច់ពី Telegram (server-side, code នេះមិនអាចត្រួតពិនិត្យបាន):</b>",
+        "• គណនីដែល <b>បង្កើត bot តាម @BotFather</b> (bot owner) ត្រូវមាន Telegram Premium សកម្ម — "
+        "មិនមែន admin ដែលចុច /setupemoji ទេ (បើ 2 នាក់ខុសគ្នា)",
+        "• ឬ bot បានទិញ username បន្ថែមតាម Fragment",
+        "• Icon លើ button បង្ហាញតែក្នុងសារដែល bot ផ្ញើផ្ទាល់ទៅ private/group/supergroup ប៉ុណ្ណោះ",
+        "• library ចាស់ (TypeError ខាងលើ) → <code>pip install -U pyTelegramBotAPI</code> រួច deploy ម្តងទៀត",
+        "",
+        "🎨 <b>ចំណាំ៖</b> ពណ៌ button (<code>style</code>: primary/success/danger) មិនតម្រូវ Telegram "
+        "Premium ទេ — ត្រូវការតែ library ថ្មីគ្រប់គ្រាន់ និង Telegram app ថ្មីរបស់ user ប៉ុណ្ណោះ។",
+    ]
+    bot.reply_to(message, "\n".join(lines))
 
 
 def norm_label(text):
@@ -413,8 +457,8 @@ def emoji_setup_kb():
     kb = types.InlineKeyboardMarkup(row_width=1)
     for glyph, label in all_emoji_categories():
         mark = "✅" if glyph in m else "⬜"
-        kb.add(types.InlineKeyboardButton(f"{mark} {label}", callback_data=f"emoji_pick_{_encode_glyph(glyph)}"))
-    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close"))
+        kb.add(pbtn(f"{mark} {label}", callback_data=f"emoji_pick_{_encode_glyph(glyph)}", style="primary"))
+    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close", style="primary"))
     return kb
 
 
@@ -474,8 +518,8 @@ def emoji_capture_step(message, glyph, label):
     ce = next((e for e in entities if e.type == "custom_emoji"), None)
     if not ce:
         kb = types.InlineKeyboardMarkup()
-        kb.add(pbtn("🔁 ព្យាយាមម្តងទៀត", callback_data=f"emoji_pick_{_encode_glyph(glyph)}"))
-        kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close"))
+        kb.add(pbtn("🔁 ព្យាយាមម្តងទៀត", callback_data=f"emoji_pick_{_encode_glyph(glyph)}", style="primary"))
+        kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close", style="primary"))
         bot.send_message(
             message.chat.id,
             "❌ រកមិនឃើញ Premium Emoji ក្នុងសារនេះទេ។\nសូមផ្ញើ Premium Emoji ពិត (មិនមែន emoji ធម្មតា) ម្តងទៀត:",
@@ -1105,11 +1149,11 @@ def main_menu_kb():
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         pbtn("🛒 ទិញ Account", callback_data="menu_shop", style="success"),
-        pbtn("💰 Wallet", callback_data="menu_wallet"),
+        pbtn("💰 Wallet", callback_data="menu_wallet", style="primary"),
     )
     kb.add(
-        pbtn("📦 ការកម្មង់របស់ខ្ញុំ", callback_data="menu_orders"),
-        pbtn("☎️ ទំនាក់ទំនង Admin", url="tg://user?id=%d" % ADMIN_ID),
+        pbtn("📦 ការកម្មង់របស់ខ្ញុំ", callback_data="menu_orders", style="primary"),
+        pbtn("☎️ ទំនាក់ទំនង Admin", url="tg://user?id=%d" % ADMIN_ID, style="primary"),
     )
     return kb
 
@@ -1127,19 +1171,19 @@ def products_kb():
             label = f"× {icon} {p['name'].upper()} - អស់ស្តុក"
             btn = pbtn(label, callback_data=f"nostock_{key}", style="danger")
         kb.add(btn)
-    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main"))
+    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main", style="primary"))
     return kb
 
 
 def qty_pick_kb(key, qty, max_qty, unit_price):
     kb = types.InlineKeyboardMarkup(row_width=3)
     kb.add(
-        pbtn("➖", callback_data=f"qtymin_{key}_{qty}"),
-        pbtn(f"{qty} ដុំ", callback_data="noop"),
-        pbtn("➕", callback_data=f"qtyplus_{key}_{qty}"),
+        pbtn("➖", callback_data=f"qtymin_{key}_{qty}", style="danger"),
+        pbtn(f"{qty} ដុំ", callback_data="noop", style="primary"),
+        pbtn("➕", callback_data=f"qtyplus_{key}_{qty}", style="success"),
     )
     kb.add(pbtn(f"✅ ទិញពី Wallet — សរុប ${unit_price * qty:.2f}", callback_data=f"qtyok_{key}_{qty}", style="success"))
-    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="menu_shop"))
+    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="menu_shop", style="primary"))
     return kb
 
 
@@ -1166,8 +1210,8 @@ def show_qty_picker(call, product_key, qty):
 
 def deposit_amount_kb():
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(pbtn("✏️ បញ្ចូលចំនួនលុយ", callback_data="dep_custom"))
-    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main"))
+    kb.add(pbtn("✏️ បញ្ចូលចំនួនលុយ", callback_data="dep_custom", style="primary"))
+    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main", style="primary"))
     return kb
 
 
@@ -1360,10 +1404,10 @@ def admin_product_pick_kb(prefix, empty_stock_only=False):
         left = stock_count(key)
         sold = p.get("sold", 0)
         label = f"{icon} {p['name']} ({left} នៅសល់ / លក់ {sold})"
-        kb.add(pbtn(label, callback_data=f"{prefix}_{key}"))
+        kb.add(pbtn(label, callback_data=f"{prefix}_{key}", style="primary"))
     if not products:
-        kb.add(pbtn("(មិនទាន់មាន product ណាមួយ)", callback_data="noop"))
-    kb.add(pbtn("🔙 បោះបង់", callback_data="admcancel"))
+        kb.add(pbtn("(មិនទាន់មាន product ណាមួយ)", callback_data="noop", style="primary"))
+    kb.add(pbtn("🔙 បោះបង់", callback_data="admcancel", style="danger"))
     return kb
 
 
@@ -1371,7 +1415,7 @@ def admin_delete_confirm_kb(key):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         pbtn("✅ បាទ/ចាស លុប", callback_data=f"admdelyes_{key}", style="danger"),
-        pbtn("🔙 បោះបង់", callback_data="admcancel"),
+        pbtn("🔙 បោះបង់", callback_data="admcancel", style="danger"),
     )
     return kb
 
@@ -1379,9 +1423,9 @@ def admin_delete_confirm_kb(key):
 def admin_edit_field_kb(key):
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(
-        pbtn("✏️ កែ ឈ្មោះ", callback_data=f"admeditname_{key}"),
-        pbtn("💵 កែ តម្លៃ", callback_data=f"admeditprice_{key}"),
-        pbtn("🔙 បោះបង់", callback_data="admcancel"),
+        pbtn("✏️ កែ ឈ្មោះ", callback_data=f"admeditname_{key}", style="primary"),
+        pbtn("💵 កែ តម្លៃ", callback_data=f"admeditprice_{key}", style="primary"),
+        pbtn("🔙 បោះបង់", callback_data="admcancel", style="danger"),
     )
     return kb
 
@@ -1729,7 +1773,7 @@ def callback_router(call):
         more_note = f"\n… និងមាន {total - len(preview)} ទៀត (មិនបានបង្ហាញ)" if total > len(preview) else ""
         kb = types.InlineKeyboardMarkup(row_width=1)
         kb.add(pbtn("🗑 លុបទាំងអស់ (Clear All)", callback_data=f"admclearstockconfirm_{key}", style="danger"))
-        kb.add(pbtn("🔙 បោះបង់", callback_data="admcancel"))
+        kb.add(pbtn("🔙 បោះបង់", callback_data="admcancel", style="danger"))
         msg = bot.edit_message_text(
             f"🗑 <b>លុប Stock — {products[key]['name']}</b> (សរុប {total})\n\n"
             + "\n".join(lines) + more_note +
@@ -1751,7 +1795,7 @@ def callback_router(call):
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
             pbtn("✅ បាទ/ចាស លុបទាំងអស់", callback_data=f"admclearstockyes_{key}", style="danger"),
-            pbtn("🔙 បោះបង់", callback_data="admcancel"),
+            pbtn("🔙 បោះបង់", callback_data="admcancel", style="danger"),
         )
         bot.edit_message_text(
             f"⚠️ តើអ្នកប្រាកដថាចង់លុប stock ទាំង {stock_count(key)} account "
@@ -1963,8 +2007,8 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
         if call:
             bot.answer_callback_query(call.id, err_text, show_alert=True)
         retry_kb = types.InlineKeyboardMarkup()
-        retry_kb.add(types.InlineKeyboardButton(
-            "🔁 ព្យាយាមម្តងទៀត", callback_data=f"paym_bkq_{amount}"
+        retry_kb.add(pbtn(
+            "🔁 ព្យាយាមម្តងទៀត", callback_data=f"paym_bkq_{amount}", style="primary"
         ))
         bot.send_message(chat_id, f"{err_text}\n\nសូមព្យាយាមម្តងទៀត បើ error នៅតែកើតឡើង ជា server ខាង gateway ខ្លួនឯងគាំង (មិនមែនកូដឯង)។", reply_markup=retry_kb)
 
@@ -1988,7 +2032,7 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
     kb = None
     if payment_url:
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🔗 បើកទំព័រទូទាត់", url=payment_url))
+        kb.add(pbtn("🔗 បើកទំព័រទូទាត់", url=payment_url, style="primary"))
 
     img_buf = build_qr_image(
         qr_string, amount=amount, ref=ref_disp,
