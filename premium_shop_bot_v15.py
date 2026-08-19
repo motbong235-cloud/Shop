@@ -95,15 +95,36 @@ PENDING_DEPOSITS_FILE = os.path.join(DATA_DIR, "pending_deposits.json")
 os.makedirs(STOCK_DIR, exist_ok=True)
 
 
+def notify_admin_error(context, exception):
+    """ផ្ញើសារ error ទៅ ADMIN_ID ដោយផ្ទាល់ (មិនចាំបាច់ NOTIFY_CHAT_IDS) ពេលមាន
+    unhandled exception កើតឡើងកន្លែងណាមួយក្នុង bot — ជួយ admin ដឹងភ្លាមៗ មិនចាំបាច់
+    មើល Render logs ចាំម្តងៗទេ។ បរាជ័យស្ងាត់ៗបើផ្ញើមិនចេញ (ឧ. admin block bot)"""
+    if not ADMIN_ID:
+        return
+    try:
+        err_text = f"{type(exception).__name__}: {exception}"
+        if len(err_text) > 500:
+            err_text = err_text[:500] + "…"
+        bot.send_message(
+            ADMIN_ID,
+            f"🚨 <b>Bot Error</b>\n"
+            f"📍 កន្លែង: <code>{html.escape(context)}</code>\n"
+            f"⚠️ <code>{html.escape(err_text)}</code>",
+        )
+    except Exception:
+        pass
+
+
 class _LoggingExceptionHandler(telebot.ExceptionHandler):
     """បើគ្មាន handler នេះ pyTelegramBotAPI នឹងលេប exception ចោលស្ងាត់ៗ ពេល handler
     ណាមួយ crash — user ចុច button ហើយគ្មានអ្វីកើតឡើងសោះ គ្មាន log អោយឃើញមូលហេតុ។
     handler នេះធ្វើឲ្យ error print ចេញ terminal/Render logs ជានិច្ច ហើយ bot បន្តដំណើរការ
-    ធម្មតាសម្រាប់ update បន្ទាប់។"""
+    ធម្មតាសម្រាប់ update បន្ទាប់ — ព្រមទាំងជូនដំណឹងទៅ admin ដោយស្វ័យប្រវត្តិ។"""
     def handle(self, exception):
         import traceback
         print("[UNHANDLED EXCEPTION]", flush=True)
         traceback.print_exc()
+        notify_admin_error("message/callback handler", exception)
         return True
 
 
@@ -122,10 +143,11 @@ def public_user_label(user):
 
 
 def notify_public(text):
-    """ផ្ញើសារទៅ channel/group ទាំងអស់ក្នុង NOTIFY_CHAT_IDS (ឧ. deposit/order ជោគជ័យ)"""
-    if not NOTIFY_CHAT_IDS:
+    """ផ្ញើសារទៅ channel/group ទាំងអស់ (hardcode + admin-added តាម /setnotify) — ឧ. deposit/order ជោគជ័យ"""
+    chat_ids = get_notify_chat_ids()
+    if not chat_ids:
         return
-    for cid in NOTIFY_CHAT_IDS:
+    for cid in chat_ids:
         try:
             bot.send_message(cid, text)
         except Exception as e:
@@ -691,6 +713,45 @@ def set_manual_qr(file_id, note=None):
         return cfg
 
 
+NOTIFY_CONFIG_FILE = os.path.join(DATA_DIR, "notify_config.json")
+
+
+def load_notify_config():
+    return _load(NOTIFY_CONFIG_FILE, {"chat_ids": []})
+
+
+def save_notify_config(d):
+    _save(NOTIFY_CONFIG_FILE, d)
+
+
+def get_notify_chat_ids():
+    """សរុប NOTIFY_CHAT_IDS ពី env var (hardcode) + channel/group ដែល admin បាន /setnotify
+    បន្ថែមតាម bot ផ្ទាល់ (ដកស្ទួនចេញ)។"""
+    cfg = load_notify_config()
+    ids = list(NOTIFY_CHAT_IDS) + [c for c in cfg.get("chat_ids", []) if c not in NOTIFY_CHAT_IDS]
+    return ids
+
+
+def add_notify_chat_id(chat_id):
+    with _lock:
+        cfg = load_notify_config()
+        ids = cfg.get("chat_ids", [])
+        if chat_id not in ids:
+            ids.append(chat_id)
+        cfg["chat_ids"] = ids
+        save_notify_config(cfg)
+        return ids
+
+
+def remove_notify_chat_id(chat_id):
+    with _lock:
+        cfg = load_notify_config()
+        ids = [c for c in cfg.get("chat_ids", []) if c != chat_id]
+        cfg["chat_ids"] = ids
+        save_notify_config(cfg)
+        return ids
+
+
 def has_auto_bakong():
     """True បើហាងនេះមាន Bakong auto-payment (CAMRAPIDPAY_API_KEY កំណត់ហើយ)"""
     return bool(CAMRAPIDPAY_API_KEY)
@@ -1162,30 +1223,35 @@ def build_qr_image(qr_string, amount=None, ref=None, label=None, subtitle=None, 
 
 
 def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5, checker=None):
-    checker = checker or camrapid_check
-    deadline = time.time() + max_minutes * 60
-    while time.time() < deadline:
-        if checker(reference):
-            new_balance = update_balance(uid, amount)
-            try:
-                bot.send_message(
-                    chat_id,
-                    f"✅ ការទូទាត់ជោគជ័យ! បញ្ចូល <b>${amount:.2f}</b> ចូល wallet។\n"
-                    f"💰 សមតុល្យថ្មី: <b>${new_balance:.2f}</b>",
-                )
-            except Exception:
-                pass
-            notify_public(
-                f"💰 <b>Deposit ជោគជ័យ!</b>\n"
-                f"👤 {user_label or 'User'}\n"
-                f"💵 ${amount:.2f}"
-            )
-            return
-        time.sleep(8)
     try:
-        bot.send_message(chat_id, "⌛ QR ផុតកំណត់ ឬមិនទាន់ទូទាត់។ សូមព្យាយាមម្តងទៀត /deposit")
-    except Exception:
-        pass
+        checker = checker or camrapid_check
+        deadline = time.time() + max_minutes * 60
+        while time.time() < deadline:
+            if checker(reference):
+                new_balance = update_balance(uid, amount)
+                try:
+                    bot.send_message(
+                        chat_id,
+                        f"✅ ការទូទាត់ជោគជ័យ! បញ្ចូល <b>${amount:.2f}</b> ចូល wallet។\n"
+                        f"💰 សមតុល្យថ្មី: <b>${new_balance:.2f}</b>\n\n"
+                        f"🙏 អរគុណដែលទុកចិត្ត {STORE_NAME}!",
+                    )
+                except Exception:
+                    pass
+                notify_public(
+                    f"💰 <b>Deposit ជោគជ័យ!</b>\n"
+                    f"👤 {user_label or 'User'} (ID: <code>{uid}</code>)\n"
+                    f"💵 ${amount:.2f}"
+                )
+                return
+            time.sleep(8)
+        try:
+            bot.send_message(chat_id, "⌛ QR ផុតកំណត់ ឬមិនទាន់ទូទាត់។ សូមព្យាយាមម្តងទៀត /deposit")
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[poll_deposit] {e}", flush=True)
+        notify_admin_error(f"poll_deposit (uid={uid}, amount={amount})", e)
 
 
 # ------------------------------------------------------------------
@@ -1316,6 +1382,7 @@ ADMIN_BTN_MSGUSER = "📨 ផ្ញើសារទៅ User"
 ADMIN_BTN_BROADCAST = "📢 ផ្ញើសារទៅគ្រប់គ្នា"
 ADMIN_BTN_EMOJI = "🎭 Setup Emoji"
 ADMIN_BTN_SETQR = "🖼 កំណត់ QR ទូទាត់ដោយដៃ"
+ADMIN_BTN_SETNOTIFY = "🔔 កំណត់ Channel ជូនដំណឹង"
 
 
 def reply_kb_for(uid):
@@ -1333,6 +1400,7 @@ def reply_kb_for(uid):
         kb.add(kbtn(ADMIN_BTN_DELPRODUCT, style="danger"), kbtn(ADMIN_BTN_EDITPRODUCT, style="primary"))
         kb.add(kbtn(ADMIN_BTN_MSGUSER, style="primary"), kbtn(ADMIN_BTN_BROADCAST, style="primary"))
         kb.add(kbtn(ADMIN_BTN_EMOJI, style="primary"), kbtn(ADMIN_BTN_SETQR, style="primary"))
+        kb.add(kbtn(ADMIN_BTN_SETNOTIFY, style="primary"))
     return kb
 
 
@@ -2234,11 +2302,12 @@ def _handle_deposit_approve(call, dep_id):
         bot.send_message(
             uid,
             f"✅ ការទូទាត់ត្រូវបានបញ្ជាក់! បញ្ចូល <b>${amount:.2f}</b> ចូល wallet។\n"
-            f"💰 សមតុល្យថ្មី: <b>${new_balance:.2f}</b>",
+            f"💰 សមតុល្យថ្មី: <b>${new_balance:.2f}</b>\n\n"
+            f"🙏 អរគុណដែលទុកចិត្ត {STORE_NAME}!",
         )
     except Exception:
         pass
-    notify_public(f"💰 <b>Deposit ជោគជ័យ!</b>\n👤 User {uid}\n💵 ${amount:.2f}")
+    notify_public(f"💰 <b>Deposit ជោគជ័យ!</b>\n👤 User ID: <code>{uid}</code>\n💵 ${amount:.2f}")
     bot.answer_callback_query(call.id, "✅ បានបញ្ជាក់ ហើយបញ្ចូលលុយចូល Wallet ជូនរួចរាល់")
     try:
         new_caption = (call.message.caption or "") + "\n\n✅ <b>បានបញ្ជាក់រួចរាល់</b>"
@@ -2638,6 +2707,76 @@ def admin_setqr_note_step(message, qr_file_id):
     bot.send_message(message.chat.id, "✅ បានកំណត់ QR ទូទាត់ដោយដៃរួចរាល់! User នឹងឃើញ QR នេះពេលចុច ➕ បញ្ចូលលុយ (ករណីគ្មាន Bakong auto-payment)។")
 
 
+@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_SETNOTIFY))
+def reply_admin_setnotify(message):
+    if not is_admin(message.from_user.id):
+        return
+    _start_setnotify_flow(message.chat.id)
+
+
+@bot.message_handler(commands=["setnotify"])
+def cmd_setnotify(message):
+    if not is_admin(message.from_user.id):
+        return
+    _start_setnotify_flow(message.chat.id)
+
+
+def _notify_list_text():
+    ids = get_notify_chat_ids()
+    if not ids:
+        return "⚠️ បច្ចុប្បន្នមិនទាន់មាន channel/group ជូនដំណឹងណាមួយទេ។"
+    lines = "\n".join(f"├ <code>{i}</code>" for i in ids)
+    return f"✅ បច្ចុប្បន្នមាន {len(ids)} កន្លែងជូនដំណឹង:\n{lines}"
+
+
+def _start_setnotify_flow(chat_id):
+    msg = bot.send_message(
+        chat_id,
+        f"🔔 <b>កំណត់ Channel/Group ជូនដំណឹង</b>\n{_notify_list_text()}\n\n"
+        f"Bot នឹងផ្ញើសារជូនដំណឹងស្វ័យប្រវត្តិទៅទីនេះ ពេលមាន <b>deposit</b> ឬ <b>order</b> ជោគជ័យ។\n\n"
+        f"📌 <b>របៀបបន្ថែម:</b> សូម <b>Forward</b> សារណាមួយពី channel/group ដែលអ្នកចង់បន្ថែម មកឲ្យ bot "
+        f"(bot ត្រូវជា admin នៅក្នុងទីនោះជាមុនសិន)\n"
+        f"🗑 <b>ដកចេញ:</b> វាយបញ្ចូល ID ចាស់ (ឧ. <code>-1001234567890</code>) ដើម្បីលុបចេញ\n"
+        f"❌ វាយ <code>-</code> ដើម្បីបោះបង់",
+    )
+    bot.register_next_step_handler(msg, admin_setnotify_step)
+
+
+def admin_setnotify_step(message):
+    if not is_admin(message.from_user.id):
+        return
+    if (message.text or "").strip() == "-":
+        bot.send_message(message.chat.id, "❌ បានបោះបង់។")
+        return
+    fwd = getattr(message, "forward_from_chat", None)
+    if fwd is not None:
+        chat_id = fwd.id
+        title = getattr(fwd, "title", None) or str(chat_id)
+        add_notify_chat_id(chat_id)
+        bot.send_message(
+            message.chat.id,
+            f"✅ បានបន្ថែម <b>{title}</b> (<code>{chat_id}</code>) ជាកន្លែងជូនដំណឹងរួចរាល់!\n\n{_notify_list_text()}",
+        )
+        return
+    text = (message.text or "").strip()
+    try:
+        chat_id = int(text)
+    except ValueError:
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ មិនត្រឹមត្រូវទេ។ សូម Forward សារពី channel/group ឬវាយបញ្ចូល ID លេខ (ឧ. -1001234567890)។ សូមព្យាយាមម្តងទៀត:",
+        )
+        bot.register_next_step_handler(msg, admin_setnotify_step)
+        return
+    ids = get_notify_chat_ids()
+    if chat_id in ids:
+        remove_notify_chat_id(chat_id)
+        bot.send_message(message.chat.id, f"🗑 បានដកចេញ <code>{chat_id}</code> ពីបញ្ជីជូនដំណឹងរួចរាល់!\n\n{_notify_list_text()}")
+    else:
+        add_notify_chat_id(chat_id)
+        bot.send_message(message.chat.id, f"✅ បានបន្ថែម <code>{chat_id}</code> ជាកន្លែងជូនដំណឹងរួចរាល់!\n\n{_notify_list_text()}")
+
+
 # ------------------------------------------------------------------
 # KEEP-ALIVE (Flask, សម្រាប់ deploy លើ Render — binding port ចាំបាច់)
 # ------------------------------------------------------------------
@@ -2673,4 +2812,10 @@ if __name__ == "__main__":
         raise SystemExit("❌ សូម set environment variable BOT_TOKEN ជាមុនសិន")
     start_keep_alive()
     print("🤖 Bot កំពុងដំណើរការ...")
-    bot.infinity_polling(skip_pending=True)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True)
+        except Exception as e:
+            print(f"[MAIN] infinity_polling crashed: {e}", flush=True)
+            notify_admin_error("main polling loop (bot បានផ្អាកបណ្តោះអាសន្ន ហើយកំពុង restart)", e)
+            time.sleep(5)
