@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: premium-shop-bot
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python premium_shop_bot_v15.py"
+    autoDeploy: true
+    disk:
+      name: shop-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: CAMRAPIDPAY_API_KEY
+        sync: false
+      - key: STORE_NAME
+        value: "Kairozen Store"
+      - key: DATA_DIR
+        value: /var/data
+      - key: PYTHON_VERSION
+        value: 3.11.9
