@@ -196,6 +196,9 @@ EMOJI_CATEGORIES = [
     ("🏦", "🏦 ធនាគារ/ABA"),
     ("★", "★ Premium badge"),
     ("🖼", "🖼 QR / រូបភាព"),
+    ("📋", "📋 ព័ត៌មានគណនី"),
+    ("📖", "📖 មុខងារ/ម៉ឺនុយ"),
+    ("💬", "💬 សារ/ចុចប៊ូតុង"),
 ]
 
 
@@ -1346,14 +1349,24 @@ def cmd_start(message):
         username=getattr(message.from_user, "username", None),
     )
     first_name = message.from_user.first_name or "មិត្ត"
+    u = get_user(message.from_user.id)
+    username = getattr(message.from_user, "username", None)
+    username_line = f"@{username}" if username else "—"
     text = (
-        f"👋 <b>សួស្តី {first_name}, សូមស្វាគមន៍មកកាន់ {STORE_NAME}!</b> 🏠\n\n"
-        f"យើងខ្ញុំជាកន្លែងទិញ account premium ដូចជា ChatGPT, Netflix, Spotify, "
-        f"Office 365, Canva... <b>ដឹកជញ្ជូនភ្លាមៗ</b> ក្រោយទូទាត់ដោយ KHQR ០សុវត្ថិភាព។\n\n"
-        f"👉 ប្រើប៊ូតុងខាងក្រោមអេក្រង់៖ 🛒 ទិញ Account, 💰 Wallet, ➕ បញ្ចូលលុយ, "
-        f"📦 ការកម្មង់ ។ល។\n\n"
-        f"✨ <i>ព័ត៌មានជំនួយ:</i> ត្រូវបញ្ចូលលុយចូល Wallet សិន រួចជ្រើសរើសទិញបាន — account ផ្ញើមកភ្លាមៗដោយស្វ័យប្រវត្តិ!\n"
-        f"🙏 អរគុណដែលទុកចិត្ត {STORE_NAME}"
+        f"👋 ជម្រាបសួរ {first_name}! សូមស្វាគមន៍មកកាន់ {STORE_NAME}! 🎉\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"📋 <b>ព័ត៌មានគណនី</b>\n"
+        f"├ ID: <code>{message.from_user.id}</code>\n"
+        f"├ Username: {username_line}\n"
+        f"└ ទឹកប្រាក់: ${u['balance']:.2f}\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"📖 <b>មុខងារ</b>\n"
+        f"├ 🛒 ទិញ Account\n"
+        f"├ ➕ បញ្ចូលលុយ\n"
+        f"├ 📦 ការកម្មង់\n"
+        f"└ 👤 ប្រវត្តិរូប\n\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"💬 ចុចប៊ូតុងខាងក្រោមដើម្បីប្រើប្រាស់!"
     )
     bot.send_message(message.chat.id, text, reply_markup=reply_kb_for(message.from_user.id))
 
