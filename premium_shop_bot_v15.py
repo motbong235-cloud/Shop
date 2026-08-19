@@ -195,6 +195,7 @@ EMOJI_CATEGORIES = [
     ("🎨", "🎨 Canva (icon product)"),
     ("🏦", "🏦 ធនាគារ/ABA"),
     ("★", "★ Premium badge"),
+    ("🖼", "🖼 QR / រូបភាព"),
 ]
 
 
@@ -262,41 +263,39 @@ _pbtn_debug = {"last_reason": None, "icon_attempted": 0, "icon_sent": 0, "style_
 # បញ្ហានេះទាំងស្រុង យើង monkey-patch to_dict/to_dic ថែមមួយជាន់ ដើម្បីបង្ខំចាក់ field ទាំងនេះ
 # ចូល dict ជានិច្ច បើ button object មាន attribute _pbtn_style/_pbtn_icon_id ដែលយើងកំណត់ដោយផ្ទាល់
 # (មិនអាស្រ័យលើថាតើ constructor ឬ to_dict ដើមស្គាល់ field នេះឬអត់ទេ)។
-for _m in ("to_dict", "to_dic"):
-    if hasattr(types.InlineKeyboardButton, _m):
-        _orig_ikb_serialize = getattr(types.InlineKeyboardButton, _m)
+# អនុវត្តលើ *ទាំង 2 ប្រភេទ button*: InlineKeyboardButton (ប៊ូតុងភ្ជាប់នឹងសារ) និង
+# KeyboardButton (ប៊ូតុងម៉ឺនុយខាងក្រោមអេក្រង់ — reply keyboard ដែលមាននៅជាប់ជានិច្ច)។
+def _patch_button_serialize(cls):
+    for _m in ("to_dict", "to_dic"):
+        if hasattr(cls, _m):
+            _orig = getattr(cls, _m)
 
-        def _make_patched(orig):
-            def _patched(self):
-                d = orig(self)
-                extra_style = getattr(self, "_pbtn_style", None)
-                extra_icon = getattr(self, "_pbtn_icon_id", None)
-                if extra_style and not d.get("style"):
-                    d["style"] = extra_style
-                if extra_icon and not d.get("icon_custom_emoji_id"):
-                    d["icon_custom_emoji_id"] = extra_icon
-                return d
-            return _patched
+            def _make_patched(orig):
+                def _patched(self):
+                    d = orig(self)
+                    extra_style = getattr(self, "_pbtn_style", None)
+                    extra_icon = getattr(self, "_pbtn_icon_id", None)
+                    if extra_style and not d.get("style"):
+                        d["style"] = extra_style
+                    if extra_icon and not d.get("icon_custom_emoji_id"):
+                        d["icon_custom_emoji_id"] = extra_icon
+                    return d
+                return _patched
 
-        setattr(types.InlineKeyboardButton, _m, _make_patched(_orig_ikb_serialize))
+            setattr(cls, _m, _make_patched(_orig))
 
 
-def pbtn(text, callback_data=None, style=None, url=None, **kw):
-    """InlineKeyboardButton ជាមួយ icon premium (បើមាន) + style ពណ៌ (Bot API 9.4:
-    success/danger/primary)។ បង្កើត button ធម្មតាមុន រួច *បង្ខំដាក់* style/icon_custom_emoji_id
-    ជា attribute ដោយផ្ទាល់លើ object (មិនអាស្រ័យលើ constructor ស្គាល់ field ថ្មីនេះឬអត់ទេ) —
-    to_dict monkey-patch ខាងលើនឹងធានាថា field ទាំងនេះចូល JSON ជានិច្ច ដរាបណា Telegram server
-    ខ្លួនឯងទទួល (Bot API 9.4+)។"""
-    glyph, icon_id = emoji_icon_for(text)
-    clean_text = _strip_glyph(text, glyph) if glyph else text
-    use_text = clean_text if icon_id else text
+_patch_button_serialize(types.InlineKeyboardButton)
+_patch_button_serialize(types.KeyboardButton)
+
+
+def _build_styled_button(cls, text, style, icon_id, clean_text, use_text, **kw):
     try:
-        btn = types.InlineKeyboardButton(use_text, callback_data=callback_data, url=url, **kw)
+        btn = cls(use_text, **kw)
     except TypeError as e:
-        _pbtn_debug["last_reason"] = f"TypeError លើ constructor មូលដ្ឋាន: {e}"
+        _pbtn_debug["last_reason"] = f"TypeError លើ constructor មូលដ្ឋាន ({cls.__name__}): {e}"
         print(f"[pbtn] {_pbtn_debug['last_reason']}", flush=True)
-        btn = types.InlineKeyboardButton(text, callback_data=callback_data, url=url, **kw)
-        return btn
+        return cls(text, **kw)
     if style:
         btn._pbtn_style = style
         _pbtn_debug["style_attempted"] += 1
@@ -306,6 +305,31 @@ def pbtn(text, callback_data=None, style=None, url=None, **kw):
         _pbtn_debug["icon_sent"] += 1
         _pbtn_debug["last_reason"] = "ok (force-injected)"
     return btn
+
+
+def pbtn(text, callback_data=None, style=None, url=None, **kw):
+    """InlineKeyboardButton (ប៊ូតុងភ្ជាប់នឹងសារ) ជាមួយ icon premium (បើមាន) + style ពណ៌
+    (Bot API 9.4: success/danger/primary)។ បង្ខំដាក់ style/icon_custom_emoji_id ចូល JSON
+    ជានិច្ច (មើល _patch_button_serialize ខាងលើ)។"""
+    glyph, icon_id = emoji_icon_for(text)
+    clean_text = _strip_glyph(text, glyph) if glyph else text
+    use_text = clean_text if icon_id else text
+    return _build_styled_button(
+        types.InlineKeyboardButton, text, style, icon_id, clean_text, use_text,
+        callback_data=callback_data, url=url, **kw,
+    )
+
+
+def kbtn(text, style=None, **kw):
+    """KeyboardButton (ប៊ូតុងម៉ឺនុយខាងក្រោមអេក្រង់ — reply keyboard ដែលនៅជាប់ជានិច្ច) ជាមួយ
+    icon premium (បើមាន) + style ពណ៌ ដូច pbtn() ដែរ តែសម្រាប់ ReplyKeyboardMarkup ជំនួសឲ្យ
+    InlineKeyboardMarkup។ ប្រើ kb.add(kbtn(BTN_SHOP, style=\"success\")) ជំនួស kb.add(BTN_SHOP)។"""
+    glyph, icon_id = emoji_icon_for(text)
+    clean_text = _strip_glyph(text, glyph) if glyph else text
+    use_text = clean_text if icon_id else text
+    return _build_styled_button(
+        types.KeyboardButton, text, style, icon_id, clean_text, use_text, **kw,
+    )
 
 
 @bot.message_handler(commands=["checkemoji"])
@@ -489,7 +513,12 @@ def cmd_setupemoji(message):
         "🎭 <b>Setup Premium Emoji</b>\n\n"
         "ជ្រើសរើសប្រភេទខាងក្រោម (រួមទាំង icon ផលិតផលនីមួយៗ) រួចផ្ញើ Premium Emoji ពិត "
         "(ត្រូវការ Telegram Premium)\nដើម្បីភ្ជាប់ icon នោះទៅគ្រប់ប៊ូតុង/សារដែលមាន glyph ធម្មតានេះ "
-        "— ស្តុកមានទើបប៊ូតុងបង្ហាញ icon premium ដូចក្នុងឧទាហរណ៍:",
+        "— ស្តុកមានទើបប៊ូតុងបង្ហាញ icon premium ដូចក្នុងឧទាហរណ៍។\n\n"
+        "✅ អនុវត្តលើ <b>ប៊ូតុងគ្រប់ប្រភេទ</b>៖ ទាំង Inline button (ភ្ជាប់នឹងសារ) និង "
+        "Reply Keyboard (ម៉ឺនុយខាងក្រោមអេក្រង់ដូចជា 🛒 ទិញ Account, 💰 Wallet ។ល។) ដោយស្វ័យប្រវត្តិ — "
+        "កំណត់ម្តងគ្រប់កន្លែងទាំងអស់។\n"
+        "⚠️ ចំណាំ៖ Reply Keyboard ដែលកំពុងបើកនៅលើអេក្រង់ user រួចហើយ នឹងបង្ហាញ icon ថ្មី "
+        "តែពេល bot ផ្ញើម៉ឺនុយនោះម្តងទៀត (ឧ. user ចុច /start ម្តងទៀត)។",
         reply_markup=emoji_setup_kb(),
     )
 
@@ -552,9 +581,23 @@ def emoji_capture_step(message, glyph, label):
         message.chat.id,
         f"✅ <b>{label}</b>\n\nបានភ្ជាប់ Premium Emoji {emoji_char} ទៅ glyph <code>{glyph}</code> រួចហើយ។\n"
         f"ចាប់ពីនេះទៅ គ្រប់ប៊ូតុង/សារណាដែលមាន {glyph} នឹងបង្ហាញ icon premium ថែមទៀត "
-        f"(ឧ. ប៊ូតុងផលិតផលក្នុង 🛒 ទិញ Account ពេលមានស្តុក)។",
+        f"(ទាំង Inline button និង Reply Keyboard ម៉ឺនុយខាងក្រោមអេក្រង់)។",
         reply_markup=emoji_setup_kb(),
     )
+    # បើ glyph នេះប្រើក្នុង Reply Keyboard (ម៉ឺនុយខាងក្រោមអេក្រង់) ផ្ញើ preview ថ្មីភ្លាមៗ
+    # ដើម្បីឲ្យ admin ឃើញលទ្ធផលដោយផ្ទាល់ (Telegram មិន auto-refresh keyboard ចាស់ដែលកំពុងបើកស្រាប់ទេ)
+    reply_btn_texts = [
+        BTN_SHOP, BTN_WALLET, BTN_DEPOSIT, BTN_ORDERS, BTN_PROFILE, BTN_HELP,
+        ADMIN_BTN_STATS, ADMIN_BTN_ADDPRODUCT, ADMIN_BTN_ADDSTOCK, ADMIN_BTN_DELSTOCK,
+        ADMIN_BTN_DELPRODUCT, ADMIN_BTN_EDITPRODUCT, ADMIN_BTN_MSGUSER, ADMIN_BTN_BROADCAST,
+        ADMIN_BTN_EMOJI, ADMIN_BTN_SETQR,
+    ]
+    if any(glyph in t for t in reply_btn_texts):
+        bot.send_message(
+            message.chat.id,
+            "🔄 ម៉ឺនុយខាងក្រោមអេក្រង់ (Reply Keyboard) ត្រូវបាន refresh ថ្មី — សូមមើលខាងក្រោម៖",
+            reply_markup=reply_kb_for(message.from_user.id),
+        )
 
 
 # ------------------------------------------------------------------
@@ -1274,18 +1317,19 @@ ADMIN_BTN_SETQR = "🖼 កំណត់ QR ទូទាត់ដោយដៃ"
 
 def reply_kb_for(uid):
     """ម៉ឺនុយ reply keyboard ពេញលេញ (ធម្មតា, គ្មាន Mini App) — user ធម្មតាឃើញប៊ូតុងសំខាន់ៗ,
-    admin (ADMIN_ID) ឃើញប៊ូតុងគ្រប់គ្រងបន្ថែម។"""
+    admin (ADMIN_ID) ឃើញប៊ូតុងគ្រប់គ្រងបន្ថែម។ ប៊ូតុងម៉ឺនុយខាងក្រោមអេក្រង់ (ReplyKeyboard) —
+    ប្រើ kbtn() ជំនួស string ធម្មតា ដើម្បីអាចដាក់ពណ៌ (Bot API 9.4)។"""
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add(BTN_SHOP)
-    kb.add(BTN_WALLET, BTN_DEPOSIT)
-    kb.add(BTN_ORDERS, BTN_PROFILE)
-    kb.add(BTN_HELP)
+    kb.add(kbtn(BTN_SHOP, style="success"))
+    kb.add(kbtn(BTN_WALLET, style="primary"), kbtn(BTN_DEPOSIT, style="success"))
+    kb.add(kbtn(BTN_ORDERS, style="primary"), kbtn(BTN_PROFILE, style="primary"))
+    kb.add(kbtn(BTN_HELP, style="primary"))
     if is_admin(uid):
-        kb.add(ADMIN_BTN_STATS, ADMIN_BTN_ADDPRODUCT)
-        kb.add(ADMIN_BTN_ADDSTOCK, ADMIN_BTN_DELSTOCK)
-        kb.add(ADMIN_BTN_DELPRODUCT, ADMIN_BTN_EDITPRODUCT)
-        kb.add(ADMIN_BTN_MSGUSER, ADMIN_BTN_BROADCAST)
-        kb.add(ADMIN_BTN_EMOJI, ADMIN_BTN_SETQR)
+        kb.add(kbtn(ADMIN_BTN_STATS, style="primary"), kbtn(ADMIN_BTN_ADDPRODUCT, style="success"))
+        kb.add(kbtn(ADMIN_BTN_ADDSTOCK, style="success"), kbtn(ADMIN_BTN_DELSTOCK, style="danger"))
+        kb.add(kbtn(ADMIN_BTN_DELPRODUCT, style="danger"), kbtn(ADMIN_BTN_EDITPRODUCT, style="primary"))
+        kb.add(kbtn(ADMIN_BTN_MSGUSER, style="primary"), kbtn(ADMIN_BTN_BROADCAST, style="primary"))
+        kb.add(kbtn(ADMIN_BTN_EMOJI, style="primary"), kbtn(ADMIN_BTN_SETQR, style="primary"))
     return kb
 
 
