@@ -252,43 +252,60 @@ def _strip_glyph(text, glyph):
     return cleaned if cleaned else text
 
 
-_pbtn_debug = {"last_reason": None, "icon_attempted": 0, "icon_sent": 0}
+_pbtn_debug = {"last_reason": None, "icon_attempted": 0, "icon_sent": 0, "style_attempted": 0}
+
+# --- Force-inject style/icon_custom_emoji_id ចូល JSON ជានិច្ច ---
+# មូលហេតុ: pyTelegramBotAPI version ខ្លះ *ទទួល* style=/icon_custom_emoji_id= ក្នុង
+# constructor បាន (គ្មាន TypeError) ប៉ុន្តែ to_dict()/to_dic() របស់ class មិនទាន់ដឹងថា
+# ត្រូវដាក់ field ថ្មីនេះចូល JSON ផ្ញើទៅ Telegram ដែរ — លទ្ធផលគឺ button ផ្ញើចេញដោយជោគជ័យ
+# (គ្មាន error) ប៉ុន្តែ Telegram មិនដែលឃើញ style សោះ ដូច្នេះមិនបង្ហាញពណ៌។ ដើម្បីជៀសវាង
+# បញ្ហានេះទាំងស្រុង យើង monkey-patch to_dict/to_dic ថែមមួយជាន់ ដើម្បីបង្ខំចាក់ field ទាំងនេះ
+# ចូល dict ជានិច្ច បើ button object មាន attribute _pbtn_style/_pbtn_icon_id ដែលយើងកំណត់ដោយផ្ទាល់
+# (មិនអាស្រ័យលើថាតើ constructor ឬ to_dict ដើមស្គាល់ field នេះឬអត់ទេ)។
+for _m in ("to_dict", "to_dic"):
+    if hasattr(types.InlineKeyboardButton, _m):
+        _orig_ikb_serialize = getattr(types.InlineKeyboardButton, _m)
+
+        def _make_patched(orig):
+            def _patched(self):
+                d = orig(self)
+                extra_style = getattr(self, "_pbtn_style", None)
+                extra_icon = getattr(self, "_pbtn_icon_id", None)
+                if extra_style and not d.get("style"):
+                    d["style"] = extra_style
+                if extra_icon and not d.get("icon_custom_emoji_id"):
+                    d["icon_custom_emoji_id"] = extra_icon
+                return d
+            return _patched
+
+        setattr(types.InlineKeyboardButton, _m, _make_patched(_orig_ikb_serialize))
 
 
 def pbtn(text, callback_data=None, style=None, url=None, **kw):
     """InlineKeyboardButton ជាមួយ icon premium (បើមាន) + style ពណ៌ (Bot API 9.4:
-    success/danger)។ សាកល្បង style/icon_custom_emoji_id មុន បើ library ចាស់មិនស្គាល់
-    នឹង fallback ទៅប៊ូតុងធម្មតាវិញ ដើម្បីកុំឲ្យ bot crash។
-    ចំណាំ: TypeError ត្រង់នេះមានន័យថា library pyTelegramBotAPI ចាស់ពេក (មិនស្គាល់
-    argument icon_custom_emoji_id/style ថ្មីនៅឡើយ) — ត្រូវ pip install -U pyTelegramBotAPI។
-    ចំណែក Telegram បដិសេធ icon (server-side, មិនមែន TypeError) បើ owner របស់ bot
-    (គណនីដែលបង្កើត bot តាម @BotFather) មិនមាន Telegram Premium សកម្ម — ករណីនេះ
-    Telegram នឹងច្រានចោល icon_custom_emoji_id ស្ងាត់ៗ (មិន error) ឬធ្វើឲ្យទាំង
-    request បរាជ័យ អាស្រ័យលើ library។"""
+    success/danger/primary)។ បង្កើត button ធម្មតាមុន រួច *បង្ខំដាក់* style/icon_custom_emoji_id
+    ជា attribute ដោយផ្ទាល់លើ object (មិនអាស្រ័យលើ constructor ស្គាល់ field ថ្មីនេះឬអត់ទេ) —
+    to_dict monkey-patch ខាងលើនឹងធានាថា field ទាំងនេះចូល JSON ជានិច្ច ដរាបណា Telegram server
+    ខ្លួនឯងទទួល (Bot API 9.4+)។"""
     glyph, icon_id = emoji_icon_for(text)
     clean_text = _strip_glyph(text, glyph) if glyph else text
-    attempts = []
-    if style and icon_id:
-        attempts.append({"style": style, "icon_custom_emoji_id": icon_id})
-    if icon_id:
-        attempts.append({"icon_custom_emoji_id": icon_id})
+    use_text = clean_text if icon_id else text
+    try:
+        btn = types.InlineKeyboardButton(use_text, callback_data=callback_data, url=url, **kw)
+    except TypeError as e:
+        _pbtn_debug["last_reason"] = f"TypeError លើ constructor មូលដ្ឋាន: {e}"
+        print(f"[pbtn] {_pbtn_debug['last_reason']}", flush=True)
+        btn = types.InlineKeyboardButton(text, callback_data=callback_data, url=url, **kw)
+        return btn
     if style:
-        attempts.append({"style": style})
+        btn._pbtn_style = style
+        _pbtn_debug["style_attempted"] += 1
     if icon_id:
+        btn._pbtn_icon_id = icon_id
         _pbtn_debug["icon_attempted"] += 1
-    for extra in attempts:
-        use_text = clean_text if "icon_custom_emoji_id" in extra else text
-        try:
-            btn = types.InlineKeyboardButton(use_text, callback_data=callback_data, url=url, **extra, **kw)
-            if "icon_custom_emoji_id" in extra:
-                _pbtn_debug["icon_sent"] += 1
-                _pbtn_debug["last_reason"] = "ok"
-            return btn
-        except TypeError as e:
-            _pbtn_debug["last_reason"] = f"TypeError (library ចាស់ពេក, មិនស្គាល់ {list(extra.keys())}): {e}"
-            print(f"[pbtn] {_pbtn_debug['last_reason']}", flush=True)
-            continue
-    return types.InlineKeyboardButton(text, callback_data=callback_data, url=url, **kw)
+        _pbtn_debug["icon_sent"] += 1
+        _pbtn_debug["last_reason"] = "ok (force-injected)"
+    return btn
 
 
 @bot.message_handler(commands=["checkemoji"])
@@ -303,6 +320,7 @@ def cmd_checkemoji(message):
         f"📦 pyTelegramBotAPI version: <code>{tb_version}</code>",
         f"🎭 Glyph ដែលបានកំណត់ icon premium: {len(m)}",
         f"🔁 pbtn() ព្យាយាមភ្ជាប់ icon: {_pbtn_debug['icon_attempted']} ដង, ជោគជ័យ (library level): {_pbtn_debug['icon_sent']} ដង",
+        f"🎨 pbtn() ព្យាយាមភ្ជាប់ style ពណ៌: {_pbtn_debug['style_attempted']} ដង (បង្ខំចាក់ចូល JSON ដោយ to_dict monkey-patch)",
         f"📝 មូលហេតុចុងក្រោយ: <code>{html.escape(str(_pbtn_debug['last_reason']))}</code>",
         "",
         "⚠️ <b>លក្ខខណ្ឌចាំបាច់ពី Telegram (server-side, code នេះមិនអាចត្រួតពិនិត្យបាន):</b>",
