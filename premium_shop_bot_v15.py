@@ -101,8 +101,20 @@ def notify_admin_error(context, exception):
     មើល Render logs ចាំម្តងៗទេ។ បរាជ័យស្ងាត់ៗបើផ្ញើមិនចេញ (ឧ. admin block bot)"""
     if not ADMIN_ID:
         return
+    err_text = f"{type(exception).__name__}: {exception}"
+    # error ធម្មតា មិនប៉ះពាល់ (ឧ. ចុច button ២ដងលឿន, edit message ដដែល) —
+    # គ្រាន់តែ log ចោល កុំរំខាន admin ដោយមិនចាំបាច់
+    _BENIGN_MARKERS = (
+        "message is not modified",
+        "query is too old",
+        "message to edit not found",
+        "message can't be edited",
+        "bot was blocked by the user",
+        "user is deactivated",
+    )
+    if any(m in err_text.lower() for m in _BENIGN_MARKERS):
+        return
     try:
-        err_text = f"{type(exception).__name__}: {exception}"
         if len(err_text) > 500:
             err_text = err_text[:500] + "…"
         bot.send_message(
