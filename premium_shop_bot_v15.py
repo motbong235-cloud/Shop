@@ -247,6 +247,14 @@ EMOJI_CATEGORIES = [
     ("📋", "📋 ព័ត៌មានគណនី"),
     ("📖", "📖 មុខងារ/ម៉ឺនុយ"),
     ("💬", "💬 សារ/ចុចប៊ូតុង"),
+    ("📧", "📧 Email (Delivery)"),
+    ("📝", "📝 Description"),
+    ("📸", "📸 Screenshot/Receipt"),
+    ("📍", "📍 កន្លែង (Log/Context)"),
+    ("🔄", "🔄 Refresh ម៉ឺនុយ"),
+    ("🔗", "🔗 តំណ/Link"),
+    ("📮", "📮 Delivery Label"),
+    ("📌", "📌 ការណែនាំ (Pin)"),
 ]
 
 
@@ -1414,17 +1422,22 @@ def show_product_detail(call, product_key):
     is_email_type = p.get("delivery_type") == "email"
     description = (p.get("description") or "").strip()
     out_of_stock = (not is_email_type) and stock_count(product_key) <= 0
-    if is_email_type:
-        stock_line = "📧 Delivery: Admin ដាក់ Premium លើ Email របស់អ្នកដោយផ្ទាល់"
-    elif out_of_stock:
-        stock_line = "❌ ស្តុកបច្ចុប្បន្ន: អស់ស្តុក"
-    else:
-        stock_line = f"📦 ស្តុកនៅសល់: {stock_count(product_key)}"
+    sold = p.get("sold", 0)
 
-    caption_parts = [f"{icon} <b>{p['name']}</b>", f"💵 តម្លៃ: ${p['price']:.2f}", stock_line]
+    lines = [f"{icon} <b>{p['name']}</b>", ""]
+    lines.append(f"💵 Price: <b>${p['price']:.2f}</b>")
+    if is_email_type:
+        lines.append("📧 Delivery: Email")
+    elif out_of_stock:
+        lines.append("➕ Stock: អស់ស្តុក")
+    else:
+        lines.append(f"➕ Stock: {stock_count(product_key)} accounts")
+    lines.append(f"📊 Sold: {sold} accounts")
     if description:
-        caption_parts.append(f"\n📝 {html.escape(description)}")
-    caption = "\n".join(caption_parts)
+        lines.append("")
+        lines.append("📝 <b>Description:</b>")
+        lines.append(f"<blockquote>{html.escape(description)}</blockquote>")
+    caption = "\n".join(lines)
 
     kb = types.InlineKeyboardMarkup(row_width=1)
     if out_of_stock:
