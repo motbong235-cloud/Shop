@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App)
+Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App) [v16]
 ----------------------------------
 លក់ account premium (ChatGPT, Netflix, Spotify, Office365, Canva ...) តាម Telegram
 - Stock គ្រប់គ្រងតាមឯកសារ .txt (មួយបន្ទាត់ = account មួយ)
@@ -24,6 +24,13 @@ Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្ម
   /subscribe, /activatesub, /stopsub, /subs, /setrentalprice) ទាំងស្រុង ព្រោះលែងប្រើហើយ។
   មុខងារផ្សេងទៀត (wallet, deposit KHQR/QR ដោយដៃ, stock, broadcast, premium emoji) នៅតែ
   ដំណើរការដូចដើមទាំងអស់។
+
+ចំណាំ (v16): បន្ថែម product ប្រភេទ "📧 Email (Admin ដាក់ដោយដៃ)" ជាជម្រើសទី ២ ក្នុងពេល
+  ➕ Product ថ្មី (ក្រៅពី 📦 Stock file auto ដូចមុន)។ ប្រភេទនេះមិនប្រើ stock .txt ទេ —
+  user ទិញរួច ត្រូវផ្ញើ email គេផ្ទាល់ជូន bot, admin ទទួលសារជូនដំណឹងភ្លាមៗ (ជាមួយ
+  ប៊ូតុង ✅ រួចរាល់ / ❌ បដិសេធ), ដាក់ Premium/Invite ចូល email នោះដោយដៃ រួចចុច
+  '✅ រួចរាល់' ដើម្បីជូនដំណឹងទៅ user ស្វ័យប្រវត្តិ (ឬចុច '❌ បដិសេធ' ដើម្បីសងលុយត្រឡប់
+  ចូល wallet វិញ)។ Order ទាំងនេះរក្សាទុកក្នុង pending_email_orders.json ដាច់ដោយឡែក។
 """
 
 import os
@@ -92,6 +99,9 @@ EMOJI_FILE = os.path.join(DATA_DIR, "premium_emoji.json")
 # មកឲ្យ admin ត្រួតពិនិត្យ + បញ្ចូលលុយឲ្យដោយដៃ (មិនមែន auto-detect ដូច Bakong ទេ)
 PAYMENT_CONFIG_FILE = os.path.join(DATA_DIR, "payment_config.json")
 PENDING_DEPOSITS_FILE = os.path.join(DATA_DIR, "pending_deposits.json")
+# ករណី product ប្រភេទ "email" (មិនមែនចែក account ពី stock file ទេ) — pending
+# រហូតដល់ admin ដាក់ Premium ចូល email របស់ user ដោយផ្ទាល់ រួចចុច 'រួចរាល់'
+PENDING_EMAIL_ORDERS_FILE = os.path.join(DATA_DIR, "pending_email_orders.json")
 os.makedirs(STOCK_DIR, exist_ok=True)
 
 
@@ -809,6 +819,51 @@ def update_pending_deposit(dep_id, **fields):
         return rec
 
 
+# ------------------------------------------------------------------
+# EMAIL-DELIVERY ORDERS (product ប្រភេទ "email" — admin ដាក់ premium ដោយដៃ
+# លើ email ផ្ទាល់ខ្លួនរបស់ user ខ្លួនឯង ជំនួសឲ្យការចែក account ពី stock file)
+# ------------------------------------------------------------------
+def load_pending_email_orders():
+    return _load(PENDING_EMAIL_ORDERS_FILE, {})
+
+
+def save_pending_email_orders(d):
+    _save(PENDING_EMAIL_ORDERS_FILE, d)
+
+
+def create_pending_email_order(order_id, uid, product_key, product_name, price, email):
+    with _lock:
+        orders = load_pending_email_orders()
+        orders[order_id] = {
+            "uid": uid,
+            "product_key": product_key,
+            "product": product_name,
+            "price": price,
+            "email": email,
+            "status": "pending",  # pending | done | rejected
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        save_pending_email_orders(orders)
+        return orders[order_id]
+
+
+def get_pending_email_order(order_id):
+    orders = load_pending_email_orders()
+    return orders.get(order_id)
+
+
+def update_pending_email_order(order_id, **fields):
+    with _lock:
+        orders = load_pending_email_orders()
+        rec = orders.get(order_id)
+        if not rec:
+            return None
+        rec.update(fields)
+        orders[order_id] = rec
+        save_pending_email_orders(orders)
+        return rec
+
+
 def get_user(uid):
     users = load_users()
     uid = str(uid)
@@ -1304,9 +1359,12 @@ def products_kb():
     products = load_products()
     kb = types.InlineKeyboardMarkup(row_width=1)
     for key, p in products.items():
-        left = stock_count(key)
         icon = resolve_icon(p.get("icon", "📦"))
-        if left > 0:
+        # product ប្រភេទ "email" គ្មាន stock file ទេ (admin ដាក់ដោយដៃម្តងម្នាក់ៗ) —
+        # ចាត់ទុកជាមានស្តុកជានិច្ច មិនត្រូវ check stock_count ទេ
+        is_email_type = p.get("delivery_type") == "email"
+        left = None if is_email_type else stock_count(key)
+        if is_email_type or left > 0:
             label = f"{icon} {p['name'].upper()} - ${p['price']:.2f}"
             btn = pbtn(label, callback_data=f"buyopt_{key}", style="success")
         else:
@@ -1838,7 +1896,12 @@ def callback_router(call):
 
     elif data.startswith("buyopt_"):
         product_key = data.split("_", 1)[1]
-        show_qty_picker(call, product_key, 1)
+        products = load_products()
+        product = products.get(product_key)
+        if product and product.get("delivery_type") == "email":
+            start_buy_email_flow(call, product_key)
+        else:
+            show_qty_picker(call, product_key, 1)
 
     elif data.startswith("qtymin_"):
         key, qty_s = data[len("qtymin_"):].rsplit("_", 1)
@@ -1886,6 +1949,18 @@ def callback_router(call):
             return
         dep_id = data[len("depreject_"):]
         _handle_deposit_reject(call, dep_id)
+
+    elif data.startswith("emailordone_"):
+        if not is_admin(uid):
+            return
+        order_id = data[len("emailordone_"):]
+        _handle_email_order_done(call, order_id)
+
+    elif data.startswith("emailorreject_"):
+        if not is_admin(uid):
+            return
+        order_id = data[len("emailorreject_"):]
+        _handle_email_order_reject(call, order_id)
 
     elif data == "admcancel":
         bot.edit_message_text("🚫 បានបោះបង់។", chat_id, call.message.message_id)
@@ -2146,6 +2221,194 @@ def handle_buy_wallet(call, product_key, qty=1):
                 broadcast_low_stock(product_key, left_after)
             except Exception as e:
                 print(f"[broadcast_low_stock] failed: {e}", flush=True)
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def start_buy_email_flow(call, product_key):
+    """ចាប់ផ្ដើមការទិញ product ប្រភេទ 'email' — សួរ email របស់ user ជាមុនសិន
+    មុននឹងកាត់លុយ (kiểm balance មុន ដើម្បីកុំឲ្យសួរ email ចោលឥតប្រយោជន៍)"""
+    uid = call.from_user.id
+    chat_id = call.message.chat.id
+    products = load_products()
+    product = products.get(product_key)
+    if not product:
+        bot.answer_callback_query(call.id, "❌ Product មិនត្រឹមត្រូវ", show_alert=True)
+        return
+    price = product["price"]
+    user = get_user(uid)
+    if user["balance"] < price:
+        bot.answer_callback_query(
+            call.id,
+            f"❌ សមតុល្យមិនគ្រប់គ្រាន់ (${user['balance']:.2f}/${price:.2f}). សូម /deposit មុន",
+            show_alert=True,
+        )
+        return
+    bot.answer_callback_query(call.id)
+    msg = bot.send_message(
+        chat_id,
+        f"📧 <b>{resolve_icon(product.get('icon'))} {product['name']}</b> — ${price:.2f}\n\n"
+        f"សូមផ្ញើ <b>Email</b> គណនីរបស់អ្នក ដែលចង់ឲ្យ Admin ដាក់ Premium ចូល "
+        f"(ឧ. <code>example@gmail.com</code>)\n\n"
+        f"⚠️ សូមប្រាកដថា Email ត្រឹមត្រូវ — Admin នឹងដាក់ Premium ដោយផ្ទាល់លើ email នេះ។",
+    )
+    bot.register_next_step_handler(msg, buy_email_step_address, product_key)
+
+
+def buy_email_step_address(message, product_key):
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    chat_id = message.chat.id
+    email = (message.text or "").strip()
+    if not _EMAIL_RE.match(email):
+        msg = bot.send_message(
+            chat_id, "❌ Email មិនត្រឹមត្រូវទេ សូមផ្ញើម្តងទៀត (ឧ. <code>example@gmail.com</code>):"
+        )
+        bot.register_next_step_handler(msg, buy_email_step_address, product_key)
+        return
+
+    products = load_products()
+    product = products.get(product_key)
+    if not product:
+        bot.send_message(chat_id, "❌ Product នេះលែងមានទៀតហើយ")
+        return
+    price = product["price"]
+    user = get_user(uid)
+    if user["balance"] < price:
+        bot.send_message(
+            chat_id,
+            f"❌ សមតុល្យមិនគ្រប់គ្រាន់ (${user['balance']:.2f}/${price:.2f}). សូម /deposit មុន រួចទិញម្តងទៀត",
+        )
+        return
+
+    update_balance(uid, -price)
+    order_id = f"EM{uid}{int(time.time())}"[:60]
+    create_pending_email_order(order_id, uid, product_key, product["name"], price, email)
+
+    bot.send_message(
+        chat_id,
+        f"✅ បានទទួល Email របស់អ្នករួចហើយ!\n\n"
+        f"🛍️ Product: <b>{product['name']}</b>\n"
+        f"💵 តម្លៃ: ${price:.2f} (កាត់ចេញពី Wallet រួច)\n"
+        f"📧 Email: <code>{html.escape(email)}</code>\n\n"
+        f"⏳ សូមរង់ចាំ Admin ដាក់ Premium ចូល Email នេះ (មិនយូរប៉ុន្មាន) — "
+        f"bot នឹងជូនដំណឹងទៅអ្នកភ្លាមៗពេលរួចរាល់។",
+    )
+
+    admin_kb = types.InlineKeyboardMarkup(row_width=1)
+    admin_kb.add(
+        pbtn("✅ រួចរាល់ (Done)", callback_data=f"emailordone_{order_id}", style="success"),
+        pbtn("❌ បដិសេធ (Refund)", callback_data=f"emailorreject_{order_id}", style="danger"),
+    )
+    if ADMIN_ID:
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"📧 <b>Order Email ថ្មី — ត្រូវការដាក់ Premium ដោយដៃ</b>\n\n"
+                f"🛍️ Product: <b>{product['name']}</b>\n"
+                f"💵 តម្លៃ: ${price:.2f}\n"
+                f"👤 User: {public_user_label(message.from_user)} (<code>{uid}</code>)\n"
+                f"📧 Email: <code>{html.escape(email)}</code>\n\n"
+                f"👉 សូមដាក់ Premium/Invite លើ email នេះឲ្យរួច រួចចុច '✅ រួចរាល់' ដើម្បីជូនដំណឹង user។",
+                reply_markup=admin_kb,
+            )
+        except Exception as e:
+            print(f"[buy_email_step_address] failed to notify admin: {e}", flush=True)
+
+
+def _handle_email_order_done(call, order_id):
+    rec = get_pending_email_order(order_id)
+    if not rec:
+        bot.answer_callback_query(call.id, "❌ រកមិនឃើញ order នេះទេ", show_alert=True)
+        return
+    if rec.get("status") != "pending":
+        bot.answer_callback_query(call.id, f"ℹ️ Order នេះត្រូវបានដោះស្រាយរួចហើយ ({rec.get('status')})", show_alert=True)
+        return
+    uid = rec["uid"]
+    update_pending_email_order(order_id, status="done")
+
+    orders = load_orders()
+    orders.append({
+        "uid": uid,
+        "product": rec["product"],
+        "price": rec["price"],
+        "qty": 1,
+        "time": time.strftime("%Y-%m-%d %H:%M"),
+        "delivery_type": "email",
+        "email": rec["email"],
+    })
+    save_orders(orders)
+
+    products = load_products()
+    if rec["product_key"] in products:
+        products[rec["product_key"]]["sold"] = products[rec["product_key"]].get("sold", 0) + 1
+        save_products(products)
+
+    users = load_users()
+    if str(uid) in users:
+        users[str(uid)]["orders"] = users[str(uid)].get("orders", 0) + 1
+        save_users(users)
+
+    try:
+        bot.send_message(
+            uid,
+            f"✅ <b>Premium ត្រូវបានដាក់រួចរាល់!</b>\n\n"
+            f"🛍️ Product: <b>{rec['product']}</b>\n"
+            f"📧 Email: <code>{html.escape(rec['email'])}</code>\n\n"
+            f"🙏 សូមពិនិត្យ email/app របស់អ្នក។ អរគុណដែលទុកចិត្ត {STORE_NAME}!",
+        )
+    except Exception:
+        pass
+
+    notify_public(
+        f"📧 <b>Order Email ជោគជ័យ!</b>\n{rec['product']} — ${rec['price']:.2f}\n👤 User ID: <code>{uid}</code>"
+    )
+    bot.answer_callback_query(call.id, "✅ បានបញ្ជាក់ ហើយជូនដំណឹងទៅ user រួចរាល់")
+    try:
+        base_text = call.message.caption or call.message.text or ""
+        new_text = base_text + "\n\n✅ <b>រួចរាល់ហើយ</b>"
+        if call.message.content_type == "text":
+            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
+        else:
+            bot.edit_message_caption(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
+    except Exception:
+        pass
+
+
+def _handle_email_order_reject(call, order_id):
+    rec = get_pending_email_order(order_id)
+    if not rec:
+        bot.answer_callback_query(call.id, "❌ រកមិនឃើញ order នេះទេ", show_alert=True)
+        return
+    if rec.get("status") != "pending":
+        bot.answer_callback_query(call.id, f"ℹ️ Order នេះត្រូវបានដោះស្រាយរួចហើយ ({rec.get('status')})", show_alert=True)
+        return
+    uid = rec["uid"]
+    price = rec["price"]
+    update_pending_email_order(order_id, status="rejected")
+    new_balance = update_balance(uid, price)  # សងលុយត្រឡប់ចូល wallet វិញ
+    try:
+        bot.send_message(
+            uid,
+            f"❌ ការកម្មង់ <b>{rec['product']}</b> (Email: <code>{html.escape(rec['email'])}</code>) "
+            f"មិនអាចដំណើរការបានទេ។\n"
+            f"💰 លុយ ${price:.2f} ត្រូវបានសងត្រឡប់ចូល Wallet វិញ (សមតុល្យថ្មី: ${new_balance:.2f})\n\n"
+            f"សូមទាក់ទង Admin ប្រសិនបើមានចម្ងល់។",
+        )
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id, "❌ បានបដិសេធ ហើយសងលុយត្រឡប់ជូន user រួចរាល់")
+    try:
+        base_text = call.message.caption or call.message.text or ""
+        new_text = base_text + "\n\n❌ <b>បានបដិសេធ + សងលុយ</b>"
+        if call.message.content_type == "text":
+            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
+        else:
+            bot.edit_message_caption(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
+    except Exception:
+        pass
 
 
 def handle_deposit(uid, chat_id, amount, user_obj, call=None):
@@ -2425,18 +2688,49 @@ def addproduct_step_icon(message, key, name, price):
     icon = message.text.strip()
     if icon.lower() == "skip" or not icon:
         icon = "📦"
+    msg = bot.reply_to(
+        message,
+        "4️⃣ សូមជ្រើសរើស <b>របៀបប្រគល់ (Delivery)</b> សម្រាប់ product នេះ:\n\n"
+        "<b>1</b> — 📦 Stock file (auto) — bot ប្រគល់ account ពី stock .txt ភ្លាមៗ ពេល user ទិញ\n"
+        "<b>2</b> — 📧 Email (admin ដាក់ដោយដៃ) — user ផ្ញើ email គេផ្ទាល់មកឲ្យ bot, "
+        "អ្នកដាក់ Premium/Invite ចូល email នោះផ្ទាល់ រួចចុច '✅ រួចរាល់' ដើម្បីជូនដំណឹង user\n\n"
+        "សូមវាយ <code>1</code> ឬ <code>2</code>:",
+    )
+    bot.register_next_step_handler(msg, addproduct_step_delivery, key, name, price, icon)
+
+
+def addproduct_step_delivery(message, key, name, price, icon):
+    if not is_admin(message.from_user.id):
+        return
+    choice = message.text.strip()
+    if choice not in ("1", "2"):
+        msg = bot.reply_to(message, "❌ សូមវាយ <code>1</code> ឬ <code>2</code> តែប៉ុណ្ណោះ:")
+        bot.register_next_step_handler(msg, addproduct_step_delivery, key, name, price, icon)
+        return
+    delivery_type = "stock" if choice == "1" else "email"
     products = load_products()
-    products[key] = {"name": name, "price": price, "icon": icon}
+    products[key] = {"name": name, "price": price, "icon": icon, "delivery_type": delivery_type}
     save_products(products)
-    if not os.path.exists(stock_path(key)):
-        open(stock_path(key), "w").close()
+    if delivery_type == "stock":
+        if not os.path.exists(stock_path(key)):
+            open(stock_path(key), "w").close()
+        extra_hint = "👉 ឥឡូវចុចប៊ូតុង 📥 Stock ថ្មី ដើម្បីបញ្ចូល account ចូល stock"
+        delivery_label = "📦 Stock file (Auto)"
+    else:
+        extra_hint = (
+            "ℹ️ Product នេះ <b>មិនប្រើ stock file</b> ទេ — user ទិញរួច ផ្ញើ email គេផ្ទាល់ "
+            "មកឲ្យ bot, អ្នកនឹងទទួលសារជូនដំណឹងភ្លាមៗ ដើម្បីដាក់ Premium ចូល email នោះដោយដៃ "
+            "រួចចុច '✅ រួចរាល់' ដើម្បីជូនដំណឹង user។"
+        )
+        delivery_label = "📧 Email (Admin ដាក់ដោយដៃ)"
     bot.reply_to(
         message,
         f"✅ <b>Product បន្ថែមរួចរាល់!</b>\n\n"
         f"{icon} {name}\n"
         f"🔑 key: <code>{key}</code>\n"
-        f"💵 តម្លៃ: ${price:.2f}\n\n"
-        f"👉 ឥឡូវចុចប៊ូតុង 📥 Stock ថ្មី ដើម្បីបញ្ចូល account ចូល stock",
+        f"💵 តម្លៃ: ${price:.2f}\n"
+        f"📮 Delivery: {delivery_label}\n\n"
+        f"{extra_hint}",
     )
 
 
@@ -2648,7 +2942,11 @@ def cmd_stats(message):
         "📦 ស្តុកបច្ចុប្បន្ន:",
     ]
     for key, p in products.items():
-        lines.append(f"  • {p['name']}: {stock_count(key)} នៅសល់ / លក់រួច {p.get('sold', 0)} accounts")
+        if p.get("delivery_type") == "email":
+            stock_disp = "📧 Email (Unlimited)"
+        else:
+            stock_disp = f"{stock_count(key)} នៅសល់"
+        lines.append(f"  • {p['name']}: {stock_disp} / លក់រួច {p.get('sold', 0)} accounts")
     bot.reply_to(message, "\n".join(lines))
 
 
