@@ -1136,16 +1136,18 @@ def camrapid_check(reference):
 # ------------------------------------------------------------------
 # KHQR CARD GENERATOR (styled card, requires: pip install qrcode Pillow numpy)
 # ------------------------------------------------------------------
-_CARD_NAVY = (13, 18, 38)
-_CARD_NAVY2 = (30, 27, 75)
-_CARD_RED = (229, 29, 39)
+# --- QR Card theme: Emerald ស្រាល (bright/light emerald — fintech ទំនើប) ---
+_CARD_NAVY = (14, 98, 78)       # header gradient (ស្រាលជាងមុន) + ឈ្មោះហាង
+_CARD_NAVY2 = (22, 156, 122)    # header gradient bottom + តម្លៃ
+_CARD_QR_DARK = (8, 56, 44)     # ពណ៌ QR module ខ្លួនឯង — រក្សាចាស់ ដើម្បីស្កេនបានច្បាស់
+_CARD_RED = (229, 57, 53)
 _CARD_WHITE = (255, 255, 255)
-_CARD_SUBTITLE = (191, 196, 234)
+_CARD_SUBTITLE = (210, 244, 231)
 _CARD_GRAY = (104, 110, 128)
 _CARD_MUTED = (139, 140, 144)
-_CARD_GOLD = (245, 197, 66)
-_CARD_VIOLET = (124, 92, 255)
-_CARD_PANEL = (250, 250, 252)
+_CARD_GOLD = (250, 204, 21)
+_CARD_VIOLET = (34, 197, 155)   # accent border/highlight (ស្រាលជាងមុន)
+_CARD_PANEL = (247, 253, 250)
 
 _FONT_REG = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -1209,7 +1211,7 @@ def _qr_img(data, box_px):
         for rx in range(n):
             if matrix[ry, rx] == 0:
                 x0, y0 = rx * mod, ry * mod
-                draw.rectangle([x0, y0, x0 + mod - 1, y0 + mod - 1], fill=_CARD_NAVY)
+                draw.rectangle([x0, y0, x0 + mod - 1, y0 + mod - 1], fill=_CARD_QR_DARK)
     return img.resize((box_px, box_px), Image.LANCZOS)
 
 
@@ -1259,7 +1261,7 @@ def build_qr_image(qr_string, amount=None, ref=None, label=None, subtitle=None, 
         draw.text((pad, int(W * 0.045) + f_title.size + int(W * 0.010)),
                   "Cambodian QR Payment · Bakong", font=f_sub, fill=_CARD_SUBTITLE)
 
-        badge_txt = "★ PREMIUM"
+        badge_txt = "KAIROZEN STORE"
         bw = _tw(draw, badge_txt, f_badge)
         bpad_x, bpad_y = int(W * 0.020), int(W * 0.011)
         bx1 = W - pad
@@ -1370,6 +1372,19 @@ def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5
             bot.send_message(chat_id, "⌛ QR ផុតកំណត់ ឬមិនទាន់ទូទាត់។ សូមព្យាយាមម្តងទៀត /deposit")
         except Exception:
             pass
+        # QR ផុតកំណត់ដោយគ្មានទូទាត់ — ជូនដំណឹង admin ដោយផ្ទាល់ ព្រម username/ID user
+        # ដើម្បីអោយ admin ដឹងថាមាននរណាម្នាក់បង្កើត QR ហើយមិនបានបង់ប្រាក់
+        if ADMIN_ID:
+            try:
+                bot.send_message(
+                    ADMIN_ID,
+                    f"⌛ <b>QR ផុតកំណត់ — មិនបានទូទាត់</b>\n"
+                    f"👤 {user_label or 'User'} (ID: <code>{uid}</code>)\n"
+                    f"💵 ចំនួន: ${amount:.2f}\n"
+                    f"🔖 <code>{reference}</code>",
+                )
+            except Exception:
+                pass
     except Exception as e:
         print(f"[poll_deposit] {e}", flush=True)
         notify_admin_error(f"poll_deposit (uid={uid}, amount={amount})", e)
@@ -2663,6 +2678,21 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
     else:
         _fail("❌ គ្មានទិន្នន័យ QR ត្រឡប់មកទេ សូមព្យាយាមម្តងទៀត")
         return
+
+    # ជូនដំណឹង admin ភ្លាមៗពេល user បង្កើត QR (មិនទាន់ដឹងថាបានទូទាត់ ឬអត់ទេ) —
+    # ដើម្បីអោយ admin ដឹងថាមាននរណាម្នាក់កំពុងព្យាយាមដាក់លុយ
+    if ADMIN_ID:
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"🆕 <b>QR ត្រូវបានបង្កើត</b>\n"
+                f"👤 {public_user_label(user_obj)} (ID: <code>{uid}</code>)\n"
+                f"💵 ចំនួន: ${amount:.2f}\n"
+                f"🔖 <code>{ref_disp}</code>\n"
+                f"💳 Bakong KHQR (auto-detect)",
+            )
+        except Exception:
+            pass
 
     t = threading.Thread(
         target=poll_deposit,
