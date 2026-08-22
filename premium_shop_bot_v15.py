@@ -473,13 +473,55 @@ def _patched_reply_to(message, text=None, *args, **kwargs):
         raise
 
 
+def _is_no_text_error(exc):
+    """រកមើលថាតើ error នេះកើតឡើងពីព្យាយាម edit_message_text លើសារដែលពិតជា
+    មិនមែនអត្ថបទទេ (ឧ. សារជារូបភាព/photo ដែលមាន caption ជំនួសអត្ថបទ) — Telegram
+    ច្រានចោលដោយប្រាប់ថា "there is no text in the message to edit"។ ករណីនេះ
+    គួរ retry ជា edit_message_caption ឬផ្ញើសារថ្មីជំនួសវិញ ជាជាងឲ្យ error លេចឡើង
+    ដល់ admin ជារៀងរាល់ដងដែល user ចុច button ពីលើសារជារូបភាព។"""
+    msg = str(exc).lower()
+    return "there is no text in the message to edit" in msg
+
+
+def _chat_and_message_id(args, kwargs):
+    """ទាញ chat_id/message_id ចេញពី positional args ឬ kwargs (គាំទ្រទាំងពីររបៀបហៅ
+    ដែលមាននៅក្នុង code ចាស់ៗ)"""
+    chat_id = kwargs.get("chat_id")
+    message_id = kwargs.get("message_id")
+    if chat_id is None and len(args) > 0:
+        chat_id = args[0]
+    if message_id is None and len(args) > 1:
+        message_id = args[1]
+    return chat_id, message_id
+
+
 def _patched_edit_message_text(text=None, *args, **kwargs):
     try:
         return _orig_edit_message_text(premium_text(text), *args, **kwargs)
     except Exception as e:
         if _is_entity_parse_error(e):
             print(f"[premium_text] entity parse failed, retrying plain text: {e}", flush=True)
-            return _orig_edit_message_text(text, *args, **kwargs)
+            try:
+                return _orig_edit_message_text(text, *args, **kwargs)
+            except Exception as e2:
+                if not _is_no_text_error(e2):
+                    raise
+                e = e2
+        if _is_no_text_error(e):
+            # សារដើមជារូបភាព (photo) — មិនអាច edit ជាអត្ថបទបានទេ។ ព្យាយាម edit
+            # ជា caption វិញ, បើនៅតែបរាជ័យទៀត ផ្ញើសារថ្មីជំនួសវិញ ដើម្បីកុំឲ្យ
+            # user ចុច button ហើយគ្មានអ្វីកើតឡើងសោះ។
+            chat_id, message_id = _chat_and_message_id(args, kwargs)
+            reply_markup = kwargs.get("reply_markup")
+            print(f"[edit_message_text] no-text fallback (chat={chat_id}, msg={message_id})", flush=True)
+            try:
+                return bot.edit_message_caption(
+                    premium_text(text), chat_id=chat_id, message_id=message_id, reply_markup=reply_markup
+                )
+            except Exception:
+                if chat_id is not None:
+                    return bot.send_message(chat_id, text, reply_markup=reply_markup)
+                raise
         raise
 
 
