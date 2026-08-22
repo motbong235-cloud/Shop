@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App) [v16]
+(ឯកសារនេះឈ្មោះ premium_shop_bot_v16.py — v16 ជាកំណែត្រឹមត្រូវ, v15 ក្នុងឈ្មោះ
+ឯកសារដើមមិនត្រូវគ្នានឹង docstring ទេ)
 ----------------------------------
 លក់ account premium (ChatGPT, Netflix, Spotify, Office365, Canva ...) តាម Telegram
 - Stock គ្រប់គ្រងតាមឯកសារ .txt (មួយបន្ទាត់ = account មួយ)
@@ -967,6 +969,25 @@ def update_balance(uid, delta):
         users[uid]["balance"] = round(users[uid]["balance"] + delta, 2)
         save_users(users)
         return users[uid]["balance"]
+
+
+def try_deduct_balance(uid, amount):
+    """ព្យាយាមកាត់លុយ amount ចេញពី wallet ជា atomic operation តែមួយ (check + deduct
+    ក្នុង _lock តែមួយ) — ជៀសវាង race condition ដែល user ចុចប៊ូតុងទិញលឿនៗ ២ដង ឬបើក
+    ២ session ដំណាលគ្នា រួច check balance ជាប់គ្នាមុននឹងណាមួយកាត់លុយចេញ (double-spend)។
+    Return (True, new_balance) បើគ្រប់គ្រាន់ និងបានកាត់រួច, ឬ (False, current_balance)
+    បើមិនគ្រប់គ្រាន់ (គ្មានអ្វីផ្លាស់ប្តូរ)។"""
+    with _lock:
+        users = load_users()
+        uid_s = str(uid)
+        if uid_s not in users:
+            users[uid_s] = {"balance": 0.0, "orders": 0}
+        current = users[uid_s]["balance"]
+        if current < amount:
+            return False, current
+        users[uid_s]["balance"] = round(current - amount, 2)
+        save_users(users)
+        return True, users[uid_s]["balance"]
 
 
 def stock_path(product_key):
@@ -2018,6 +2039,7 @@ def cmd_broadcast(message):
             sent += 1
         except Exception:
             failed += 1
+        time.sleep(0.05)  # ជៀសវាង Telegram flood-control (429) ពេល user ច្រើន
     bot.reply_to(message, f"✅ ផ្ញើជោគជ័យ {sent} នាក់ ({failed} បរាជ័យ)")
 
 
@@ -2363,22 +2385,22 @@ def handle_buy_wallet(call, product_key, qty=1):
         bot.answer_callback_query(call.id, f"❌ ស្តុកមានតែ {stock_count(product_key)} មិនគ្រប់ {qty}", show_alert=True)
         return
 
-    user = get_user(uid)
-    if user["balance"] < total_price:
-        bot.answer_callback_query(
-            call.id,
-            f"❌ សមតុល្យមិនគ្រប់គ្រាន់ (${user['balance']:.2f}/${total_price:.2f}). សូម /deposit មុន",
-            show_alert=True,
-        )
-        return
-
     items = pop_stock_items(product_key, qty)
     if len(items) < qty:
         push_stock_items(product_key, items)
         bot.answer_callback_query(call.id, "❌ ស្តុកអស់ភ្លាមៗ សូមព្យាយាមម្តងទៀត", show_alert=True)
         return
 
-    update_balance(uid, -total_price)
+    ok, cur_balance = try_deduct_balance(uid, total_price)
+    if not ok:
+        push_stock_items(product_key, items)  # ដាក់ stock ត្រឡប់វិញ ព្រោះកាត់លុយមិនចេញ
+        bot.answer_callback_query(
+            call.id,
+            f"❌ សមតុល្យមិនគ្រប់គ្រាន់ (${cur_balance:.2f}/${total_price:.2f}). សូម /deposit មុន",
+            show_alert=True,
+        )
+        return
+
     orders = load_orders()
     orders.append({
         "uid": uid,
@@ -2488,15 +2510,14 @@ def buy_email_step_address(message, product_key):
         bot.send_message(chat_id, "❌ Product នេះលែងមានទៀតហើយ")
         return
     price = product["price"]
-    user = get_user(uid)
-    if user["balance"] < price:
+    ok, cur_balance = try_deduct_balance(uid, price)
+    if not ok:
         bot.send_message(
             chat_id,
-            f"❌ សមតុល្យមិនគ្រប់គ្រាន់ (${user['balance']:.2f}/${price:.2f}). សូម /deposit មុន រួចទិញម្តងទៀត",
+            f"❌ សមតុល្យមិនគ្រប់គ្រាន់ (${cur_balance:.2f}/${price:.2f}). សូម /deposit មុន រួចទិញម្តងទៀត",
         )
         return
 
-    update_balance(uid, -price)
     order_id = f"EM{uid}{int(time.time())}"[:60]
     create_pending_email_order(order_id, uid, product_key, product["name"], price, email)
 
