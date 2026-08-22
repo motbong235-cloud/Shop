@@ -31,6 +31,10 @@ Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្ម
   ប៊ូតុង ✅ រួចរាល់ / ❌ បដិសេធ), ដាក់ Premium/Invite ចូល email នោះដោយដៃ រួចចុច
   '✅ រួចរាល់' ដើម្បីជូនដំណឹងទៅ user ស្វ័យប្រវត្តិ (ឬចុច '❌ បដិសេធ' ដើម្បីសងលុយត្រឡប់
   ចូល wallet វិញ)។ Order ទាំងនេះរក្សាទុកក្នុង pending_email_orders.json ដាច់ដោយឡែក។
+  បន្ថែម: product នីមួយៗឥឡូវអាចមាន 🖼 រូបភាព និង 📝 Description (កំណត់ពេលបន្ថែម
+  product ថ្មី ជំហានទី ៥-៦, ឬកែពេលក្រោយតាម ✏️ កែ Product -> 🖼 កែ រូបភាព / 📝 កែ
+  Description)។ ពេល user ចុចមើល product ណាមួយក្នុងហាង bot នឹងបង្ហាញរូបភាព (បើមាន)
+  + description + តម្លៃ + ស្តុក ជាមុនសិន រួចមានប៊ូតុង '✅ ទិញឥឡូវ' ដើម្បីបន្ត។
 """
 
 import os
@@ -1366,10 +1370,11 @@ def products_kb():
         left = None if is_email_type else stock_count(key)
         if is_email_type or left > 0:
             label = f"{icon} {p['name'].upper()} - ${p['price']:.2f}"
-            btn = pbtn(label, callback_data=f"buyopt_{key}", style="success")
         else:
             label = f"× {icon} {p['name'].upper()} - អស់ស្តុក"
-            btn = pbtn(label, callback_data=f"nostock_{key}", style="danger")
+        # ចុចមើលបានជានិច្ច (មិនថាអស់ស្តុក ឬ balance អ្វីទេ) — ព័ត៌មាន photo/price/description
+        # ត្រូវឲ្យ user ឃើញបានគ្រប់ពេល, ការ check ស្តុក/balance ធ្វើតែពេលចុច "✅ ទិញឥឡូវ" ប៉ុណ្ណោះ
+        btn = pbtn(label, callback_data=f"buyopt_{key}", style="success" if (is_email_type or left > 0) else "danger")
         kb.add(btn)
     kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="back_main", style="primary"))
     return kb
@@ -1387,6 +1392,59 @@ def qty_pick_kb(key, qty, max_qty, unit_price):
     return kb
 
 
+def _safe_edit_or_send(call, text, reply_markup):
+    """ព្យាយាម edit សារដើម (menu_shop list) ជាអត្ថបទថ្មី — បើ edit មិនកើត (ឧ. សារដើម
+    ជារូបភាព ដែល Telegram មិនអនុញ្ញាតឲ្យប្តូរទៅជាអត្ថបទបានទេ) នោះផ្ញើសារថ្មីជំនួសវិញ"""
+    chat_id = call.message.chat.id
+    try:
+        bot.edit_message_text(text, chat_id, call.message.message_id, reply_markup=reply_markup)
+    except Exception:
+        bot.send_message(chat_id, text, reply_markup=reply_markup)
+
+
+def show_product_detail(call, product_key):
+    """បង្ហាញព័ត៌មានលម្អិត product (រូបភាព + description) មុននឹង user ចុចទិញ"""
+    chat_id = call.message.chat.id
+    products = load_products()
+    p = products.get(product_key)
+    if not p:
+        bot.answer_callback_query(call.id, "❌ Product មិនត្រឹមត្រូវ", show_alert=True)
+        return
+    icon = resolve_icon(p.get("icon", "📦"))
+    is_email_type = p.get("delivery_type") == "email"
+    description = (p.get("description") or "").strip()
+    out_of_stock = (not is_email_type) and stock_count(product_key) <= 0
+    if is_email_type:
+        stock_line = "📧 Delivery: Admin ដាក់ Premium លើ Email របស់អ្នកដោយផ្ទាល់"
+    elif out_of_stock:
+        stock_line = "❌ ស្តុកបច្ចុប្បន្ន: អស់ស្តុក"
+    else:
+        stock_line = f"📦 ស្តុកនៅសល់: {stock_count(product_key)}"
+
+    caption_parts = [f"{icon} <b>{p['name']}</b>", f"💵 តម្លៃ: ${p['price']:.2f}", stock_line]
+    if description:
+        caption_parts.append(f"\n📝 {html.escape(description)}")
+    caption = "\n".join(caption_parts)
+
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    if out_of_stock:
+        kb.add(pbtn("❌ អស់ស្តុក — ទាក់ទង Admin", callback_data=f"nostock_{product_key}", style="danger"))
+    else:
+        kb.add(pbtn("✅ ទិញឥឡូវ", callback_data=f"buydetailok_{product_key}", style="success"))
+    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="menu_shop", style="primary"))
+
+    photo_file_id = p.get("photo_file_id")
+    if photo_file_id:
+        bot.answer_callback_query(call.id)
+        try:
+            bot.send_photo(chat_id, photo_file_id, caption=caption, reply_markup=kb)
+        except Exception as e:
+            print(f"[show_product_detail] send_photo failed: {e}", flush=True)
+            bot.send_message(chat_id, caption, reply_markup=kb)
+    else:
+        _safe_edit_or_send(call, caption, kb)
+
+
 def show_qty_picker(call, product_key, qty):
     chat_id = call.message.chat.id
     products = load_products()
@@ -1401,11 +1459,11 @@ def show_qty_picker(call, product_key, qty):
     qty = max(1, min(qty, max_qty))
     icon = resolve_icon(p.get("icon", "📦"))
     sold = p.get("sold", 0)
-    bot.edit_message_text(
+    text = (
         f"{icon} <b>{p['name']}</b>\n💵 តម្លៃឯកតា: ${p['price']:.2f}\n📦 ស្តុកនៅសល់: {max_qty}\n📈 លក់រួច: {sold} accounts\n\n"
-        f"សូមជ្រើសរើសចំនួនដែលចង់ទិញ:",
-        chat_id, call.message.message_id, reply_markup=qty_pick_kb(product_key, qty, max_qty, p["price"]),
+        f"សូមជ្រើសរើសចំនួនដែលចង់ទិញ:"
     )
+    _safe_edit_or_send(call, text, qty_pick_kb(product_key, qty, max_qty, p["price"]))
 
 
 def deposit_amount_kb():
@@ -1638,6 +1696,8 @@ def admin_edit_field_kb(key):
     kb.add(
         pbtn("✏️ កែ ឈ្មោះ", callback_data=f"admeditname_{key}", style="primary"),
         pbtn("💵 កែ តម្លៃ", callback_data=f"admeditprice_{key}", style="primary"),
+        pbtn("🖼 កែ រូបភាព", callback_data=f"admeditphoto_{key}", style="primary"),
+        pbtn("📝 កែ Description", callback_data=f"admeditdesc_{key}", style="primary"),
         pbtn("🔙 បោះបង់", callback_data="admcancel", style="danger"),
     )
     return kb
@@ -1683,6 +1743,52 @@ def editproduct_step_price(message, key):
     if new_price != old_price:
         sent, failed = broadcast_price_change(key, old_price, new_price)
         bot.send_message(message.chat.id, f"📢 ជូនដំណឹងតម្លៃថ្មីទៅ user {sent} នាក់ ({failed} បរាជ័យ)")
+
+
+def editproduct_step_photo(message, key):
+    if not is_admin(message.from_user.id):
+        return
+    if not message.photo:
+        if (message.text or "").strip().lower() in ("skip", "-", "remove", "clear"):
+            products = load_products()
+            if key not in products:
+                bot.reply_to(message, "❌ Product មិនត្រឹមត្រូវ (ប្រហែលជាត្រូវបានលុបទៅហើយ)")
+                return
+            products[key]["photo_file_id"] = None
+            save_products(products)
+            bot.reply_to(message, "✅ បានលុបរូបភាពរបស់ product នេះចេញរួចហើយ")
+            return
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ សូមផ្ញើជា <b>រូបភាព (Photo)</b>, ឬវាយ <code>skip</code> ដើម្បីលុបរូបភាពចេញ សូមព្យាយាមម្តងទៀត:",
+        )
+        bot.register_next_step_handler(msg, editproduct_step_photo, key)
+        return
+    products = load_products()
+    if key not in products:
+        bot.reply_to(message, "❌ Product មិនត្រឹមត្រូវ (ប្រហែលជាត្រូវបានលុបទៅហើយ)")
+        return
+    products[key]["photo_file_id"] = message.photo[-1].file_id
+    save_products(products)
+    bot.reply_to(message, "✅ បានប្តូររូបភាព product នេះរួចហើយ")
+
+
+def editproduct_step_description(message, key):
+    if not is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    products = load_products()
+    if key not in products:
+        bot.reply_to(message, "❌ Product មិនត្រឹមត្រូវ (ប្រហែលជាត្រូវបានលុបទៅហើយ)")
+        return
+    if text.lower() in ("skip", "-", "remove", "clear"):
+        products[key]["description"] = ""
+        save_products(products)
+        bot.reply_to(message, "✅ បានលុប description របស់ product នេះចេញរួចហើយ")
+        return
+    products[key]["description"] = text[:900]
+    save_products(products)
+    bot.reply_to(message, "✅ បានប្តូរ description របស់ product នេះរួចហើយ")
 
 
 @bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_ADDSTOCK))
@@ -1896,6 +2002,10 @@ def callback_router(call):
 
     elif data.startswith("buyopt_"):
         product_key = data.split("_", 1)[1]
+        show_product_detail(call, product_key)
+
+    elif data.startswith("buydetailok_"):
+        product_key = data[len("buydetailok_"):]
         products = load_products()
         product = products.get(product_key)
         if product and product.get("delivery_type") == "email":
@@ -2113,6 +2223,37 @@ def callback_router(call):
             chat_id, call.message.message_id,
         )
         bot.register_next_step_handler(call.message, editproduct_step_price, key)
+
+    elif data.startswith("admeditphoto_"):
+        if not is_admin(uid):
+            return
+        key = data.split("_", 1)[1]
+        products = load_products()
+        if key not in products:
+            bot.answer_callback_query(call.id, "❌ Product មិនត្រឹមត្រូវ", show_alert=True)
+            return
+        bot.send_message(
+            chat_id,
+            "🖼 សូមផ្ញើ <b>រូបភាព (Photo)</b> ថ្មីសម្រាប់ product នេះ\n"
+            "ឬវាយ <code>skip</code> ដើម្បីលុបរូបភាពបច្ចុប្បន្នចេញ:",
+        )
+        bot.register_next_step_handler(call.message, editproduct_step_photo, key)
+
+    elif data.startswith("admeditdesc_"):
+        if not is_admin(uid):
+            return
+        key = data.split("_", 1)[1]
+        products = load_products()
+        if key not in products:
+            bot.answer_callback_query(call.id, "❌ Product មិនត្រឹមត្រូវ", show_alert=True)
+            return
+        cur_desc = products[key].get("description") or "— គ្មាន"
+        bot.send_message(
+            chat_id,
+            f"📝 Description បច្ចុប្បន្ន: {html.escape(cur_desc)}\n\n"
+            f"សូមផ្ញើ description ថ្មី ឬវាយ <code>skip</code> ដើម្បីលុបចេញ:",
+        )
+        bot.register_next_step_handler(call.message, editproduct_step_description, key)
 
     elif data.startswith("admdel_"):
         if not is_admin(uid):
@@ -2708,8 +2849,55 @@ def addproduct_step_delivery(message, key, name, price, icon):
         bot.register_next_step_handler(msg, addproduct_step_delivery, key, name, price, icon)
         return
     delivery_type = "stock" if choice == "1" else "email"
+    msg = bot.reply_to(
+        message,
+        "5️⃣ សូមផ្ញើ <b>រូបភាព (Photo)</b> សម្រាប់ product នេះ (បង្ហាញឲ្យ user ឃើញពេលចុចមើល)\n"
+        "ឬវាយ <code>skip</code> ដើម្បីរំលង (គ្មានរូបភាព):",
+    )
+    bot.register_next_step_handler(msg, addproduct_step_photo, key, name, price, icon, delivery_type)
+
+
+def addproduct_step_photo(message, key, name, price, icon, delivery_type):
+    if not is_admin(message.from_user.id):
+        return
+    photo_file_id = None
+    if message.photo:
+        photo_file_id = message.photo[-1].file_id
+    elif (message.text or "").strip().lower() == "skip":
+        photo_file_id = None
+    else:
+        msg = bot.reply_to(
+            message,
+            "❌ សូមផ្ញើជា <b>រូបភាព (Photo)</b> ឬវាយ <code>skip</code> ដើម្បីរំលង សូមព្យាយាមម្តងទៀត:",
+        )
+        bot.register_next_step_handler(msg, addproduct_step_photo, key, name, price, icon, delivery_type)
+        return
+    msg = bot.send_message(
+        message.chat.id,
+        "6️⃣ សូមវាយ <b>ការពិពណ៌នា (Description)</b> សម្រាប់ product នេះ (បង្ហាញឲ្យ user ឃើញ)\n"
+        "ឬវាយ <code>skip</code> ដើម្បីរំលង (គ្មាន description):",
+    )
+    bot.register_next_step_handler(msg, addproduct_step_description, key, name, price, icon, delivery_type, photo_file_id)
+
+
+def addproduct_step_description(message, key, name, price, icon, delivery_type, photo_file_id):
+    if not is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if text.lower() == "skip" or not text:
+        description = ""
+    else:
+        description = text[:900]  # កំណត់កុំឲ្យវែងហួស (Telegram photo caption កំណត់ 1024 តួ)
+
     products = load_products()
-    products[key] = {"name": name, "price": price, "icon": icon, "delivery_type": delivery_type}
+    products[key] = {
+        "name": name,
+        "price": price,
+        "icon": icon,
+        "delivery_type": delivery_type,
+        "photo_file_id": photo_file_id,
+        "description": description,
+    }
     save_products(products)
     if delivery_type == "stock":
         if not os.path.exists(stock_path(key)):
@@ -2723,15 +2911,21 @@ def addproduct_step_delivery(message, key, name, price, icon):
             "រួចចុច '✅ រួចរាល់' ដើម្បីជូនដំណឹង user។"
         )
         delivery_label = "📧 Email (Admin ដាក់ដោយដៃ)"
-    bot.reply_to(
-        message,
+
+    summary = (
         f"✅ <b>Product បន្ថែមរួចរាល់!</b>\n\n"
         f"{icon} {name}\n"
         f"🔑 key: <code>{key}</code>\n"
         f"💵 តម្លៃ: ${price:.2f}\n"
-        f"📮 Delivery: {delivery_label}\n\n"
-        f"{extra_hint}",
+        f"📮 Delivery: {delivery_label}\n"
+        f"🖼 Photo: {'✅ មាន' if photo_file_id else '— គ្មាន'}\n"
+        f"📝 Description: {html.escape(description) if description else '— គ្មាន'}\n\n"
+        f"{extra_hint}"
     )
+    if photo_file_id:
+        bot.send_photo(message.chat.id, photo_file_id, caption=summary)
+    else:
+        bot.send_message(message.chat.id, summary)
 
 
 @bot.message_handler(commands=["addstock"])
