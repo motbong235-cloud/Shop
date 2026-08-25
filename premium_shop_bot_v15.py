@@ -228,9 +228,9 @@ TR = {
         "zh": "📦 最近订单:\n",
     },
     "profile_header": {
-        "km": "👤 <b>ប្រវត្តិរូបរបស់អ្នក</b>\nID: <code>{uid}</code>\n💰 សមតុល្យ: ${balance:.2f}\nការកម្មង់: {orders}",
-        "en": "👤 <b>Your Profile</b>\nID: <code>{uid}</code>\n💰 Balance: ${balance:.2f}\nOrders: {orders}",
-        "zh": "👤 <b>您的资料</b>\nID: <code>{uid}</code>\n💰 余额: ${balance:.2f}\n订单: {orders}",
+        "km": "👤 <b>ប្រវត្តិរូបរបស់អ្នក</b>\nID: <code>{user_id}</code>\n💰 សមតុល្យ: ${balance:.2f}\nការកម្មង់: {orders}",
+        "en": "👤 <b>Your Profile</b>\nID: <code>{user_id}</code>\n💰 Balance: ${balance:.2f}\nOrders: {orders}",
+        "zh": "👤 <b>您的资料</b>\nID: <code>{user_id}</code>\n💰 余额: ${balance:.2f}\n订单: {orders}",
     },
     "help_text": {
         "km": "☎️ ទំនាក់ទំនង Admin បានផ្ទាល់ខាងក្រោម ឬចុច /start ដើម្បីមើលម៉ឺនុយម្តងទៀត:",
@@ -636,6 +636,9 @@ EMOJI_CATEGORIES = [
     ("🔍", "🔍 មើល Data User"),
     ("➡️", "➡️ ទំព័របន្ទាប់"),
     ("⬅️", "⬅️ ទំព័រមុន"),
+    ("🇰🇭", "🇰🇭 ទង់ខ្មែរ (ជ្រើសភាសា)"),
+    ("🇬🇧", "🇬🇧 ទង់អង់គ្លេស (ជ្រើសភាសា)"),
+    ("🇨🇳", "🇨🇳 ទង់ចិន (ជ្រើសភាសា)"),
 ]
 
 
@@ -2128,7 +2131,7 @@ def reply_profile(message):
     u = get_user(uid)
     bot.send_message(
         message.chat.id,
-        t(uid, "profile_header", uid=uid, balance=u.get("balance", 0.0), orders=u.get("orders", 0)),
+        t(uid, "profile_header", user_id=uid, balance=u.get("balance", 0.0), orders=u.get("orders", 0)),
     )
 
 
