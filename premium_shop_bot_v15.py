@@ -979,22 +979,40 @@ def _decode_glyph(hex_str):
     return bytes.fromhex(hex_str).decode("utf-8")
 
 
-def emoji_setup_kb():
+EMOJI_PAGE_SIZE = 12
+
+
+def emoji_setup_kb(page=0):
     m = get_emoji_map()
+    cats = all_emoji_categories()
+    total = len(cats)
+    start = page * EMOJI_PAGE_SIZE
+    page_cats = cats[start:start + EMOJI_PAGE_SIZE]
+
     kb = types.InlineKeyboardMarkup(row_width=1)
-    for glyph, label in all_emoji_categories():
+    for glyph, label in page_cats:
         mark = "✅" if glyph in m else "⬜"
-        kb.add(pbtn(f"{mark} {label}", callback_data=f"emoji_pick_{_encode_glyph(glyph)}", style="primary"))
+        kb.add(pbtn(
+            f"{mark} {label}",
+            callback_data=f"emoji_pick_{_encode_glyph(glyph)}_{page}",
+            style="primary",
+        ))
+
+    nav = []
+    if page > 0:
+        nav.append(pbtn("⬅️ មុន", callback_data=f"emojilist_{page - 1}", style="primary"))
+    if start + EMOJI_PAGE_SIZE < total:
+        nav.append(pbtn("បន្ទាប់ ➡️", callback_data=f"emojilist_{page + 1}", style="primary"))
+    if nav:
+        kb.add(*nav)
+
     kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close", style="primary"))
-    return kb
+    return kb, total, page
 
 
-@bot.message_handler(commands=["setupemoji"])
-def cmd_setupemoji(message):
-    if not is_admin(message.from_user.id):
-        return
-    bot.send_message(
-        message.chat.id,
+def emoji_setup_text(total, page):
+    last_page = (total - 1) // EMOJI_PAGE_SIZE if total else 0
+    return (
         "🎭 <b>Setup Premium Emoji</b>\n\n"
         "ជ្រើសរើសប្រភេទខាងក្រោម (រួមទាំង icon ផលិតផលនីមួយៗ) រួចផ្ញើ Premium Emoji ពិត "
         "(ត្រូវការ Telegram Premium)\nដើម្បីភ្ជាប់ icon នោះទៅគ្រប់ប៊ូតុង/សារដែលមាន glyph ធម្មតានេះ "
@@ -1003,12 +1021,20 @@ def cmd_setupemoji(message):
         "Reply Keyboard (ម៉ឺនុយខាងក្រោមអេក្រង់ដូចជា 🛒 ទិញ Account, 💰 Wallet ។ល។) ដោយស្វ័យប្រវត្តិ — "
         "កំណត់ម្តងគ្រប់កន្លែងទាំងអស់។\n"
         "⚠️ ចំណាំ៖ Reply Keyboard ដែលកំពុងបើកនៅលើអេក្រង់ user រួចហើយ នឹងបង្ហាញ icon ថ្មី "
-        "តែពេល bot ផ្ញើម៉ឺនុយនោះម្តងទៀត (ឧ. user ចុច /start ម្តងទៀត)។",
-        reply_markup=emoji_setup_kb(),
+        "តែពេល bot ផ្ញើម៉ឺនុយនោះម្តងទៀត (ឧ. user ចុច /start ម្តងទៀត)។\n\n"
+        f"(ទំព័រ {page + 1}/{last_page + 1})"
     )
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("emoji_"))
+@bot.message_handler(commands=["setupemoji"])
+def cmd_setupemoji(message):
+    if not is_admin(message.from_user.id):
+        return
+    kb, total, page = emoji_setup_kb(0)
+    bot.send_message(message.chat.id, emoji_setup_text(total, page), reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("emoji_") or c.data.startswith("emojilist_"))
 def emoji_setup_callback(call):
     if not is_admin(call.from_user.id):
         bot.answer_callback_query(call.id)
@@ -1019,15 +1045,24 @@ def emoji_setup_callback(call):
     if data == "emoji_close":
         bot.edit_message_text("🎭 បិទ Setup Emoji។ ប្រើ /setupemoji ម្តងទៀតបើត្រូវការ។", chat_id, call.message.message_id)
 
+    elif data.startswith("emojilist_"):
+        page = int(data[len("emojilist_"):])
+        kb, total, page = emoji_setup_kb(page)
+        bot.edit_message_text(
+            emoji_setup_text(total, page), chat_id, call.message.message_id, reply_markup=kb,
+        )
+
     elif data.startswith("emoji_pick_"):
-        glyph = _decode_glyph(data[len("emoji_pick_"):])
+        hex_part, _, page_str = data[len("emoji_pick_"):].rpartition("_")
+        glyph = _decode_glyph(hex_part)
+        page = int(page_str)
         label = next((l for g, l in all_emoji_categories() if g == glyph), f"Icon {glyph}")
         msg = bot.send_message(
             chat_id,
             f"📨 សូមផ្ញើ <b>Premium Emoji ពិត</b> សម្រាប់ប្រភេទ:\n{label}\n\n"
             f"(ត្រូវជា custom emoji ពិតៗ ដែលអ្នកមាន Telegram Premium ចុចផ្ញើ មិនមែន emoji ធម្មតាទេ)",
         )
-        bot.register_next_step_handler(msg, emoji_capture_step, glyph, label)
+        bot.register_next_step_handler(msg, emoji_capture_step, glyph, label, page)
 
     elif data.startswith("emoji_clear_"):
         glyph = _decode_glyph(data[len("emoji_clear_"):])
@@ -1035,22 +1070,23 @@ def emoji_setup_callback(call):
         m = get_emoji_map()
         m.pop(glyph, None)
         save_emoji_map(m)
+        kb, total, page = emoji_setup_kb(0)
         bot.edit_message_text(
             f"🗑 លុប icon premium សម្រាប់ {label} រួចហើយ។",
-            chat_id, call.message.message_id, reply_markup=emoji_setup_kb(),
+            chat_id, call.message.message_id, reply_markup=kb,
         )
 
     bot.answer_callback_query(call.id)
 
 
-def emoji_capture_step(message, glyph, label):
+def emoji_capture_step(message, glyph, label, page=0):
     if not is_admin(message.from_user.id):
         return
     entities = message.entities or []
     ce = next((e for e in entities if e.type == "custom_emoji"), None)
     if not ce:
         kb = types.InlineKeyboardMarkup()
-        kb.add(pbtn("🔁 ព្យាយាមម្តងទៀត", callback_data=f"emoji_pick_{_encode_glyph(glyph)}", style="primary"))
+        kb.add(pbtn("🔁 ព្យាយាមម្តងទៀត", callback_data=f"emoji_pick_{_encode_glyph(glyph)}_{page}", style="primary"))
         kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close", style="primary"))
         bot.send_message(
             message.chat.id,
@@ -1062,12 +1098,13 @@ def emoji_capture_step(message, glyph, label):
     m = get_emoji_map()
     m[glyph] = {"custom_emoji_id": ce.custom_emoji_id, "emoji": emoji_char}
     save_emoji_map(m)
+    kb, total, page = emoji_setup_kb(page)
     bot.send_message(
         message.chat.id,
         f"✅ <b>{label}</b>\n\nបានភ្ជាប់ Premium Emoji {emoji_char} ទៅ glyph <code>{glyph}</code> រួចហើយ។\n"
         f"ចាប់ពីនេះទៅ គ្រប់ប៊ូតុង/សារណាដែលមាន {glyph} នឹងបង្ហាញ icon premium ថែមទៀត "
         f"(ទាំង Inline button និង Reply Keyboard ម៉ឺនុយខាងក្រោមអេក្រង់)។",
-        reply_markup=emoji_setup_kb(),
+        reply_markup=kb,
     )
     # បើ glyph នេះប្រើក្នុង Reply Keyboard (ម៉ឺនុយខាងក្រោមអេក្រង់) ផ្ញើ preview ថ្មីភ្លាមៗ
     # ដើម្បីឲ្យ admin ឃើញលទ្ធផលដោយផ្ទាល់ (Telegram មិន auto-refresh keyboard ចាស់ដែលកំពុងបើកស្រាប់ទេ)
