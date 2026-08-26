@@ -1873,7 +1873,15 @@ def products_kb(uid):
     lang = get_user_lang(uid)
     products = load_products()
     kb = types.InlineKeyboardMarkup(row_width=1)
-    for key, p in products.items():
+    # តម្រៀប product ដែលមានស្តុក (ឬ email type ដែលចាត់ទុកមានស្តុកជានិច្ច) ឲ្យនៅខាងលើ
+    # ហើយ product ដែលអស់ស្តុកទុកនៅខាងក្រោម (រក្សាលំដាប់ដើមក្នុងក្រុមនីមួយៗ)
+    def _in_stock(item):
+        k, prod = item
+        if prod.get("delivery_type") == "email":
+            return True
+        return stock_count(k) > 0
+    ordered_products = sorted(products.items(), key=lambda item: 0 if _in_stock(item) else 1)
+    for key, p in ordered_products:
         icon = resolve_icon(p.get("icon", "📦"))
         # product ប្រភេទ "email" គ្មាន stock file ទេ (admin ដាក់ដោយដៃម្តងម្នាក់ៗ) —
         # ចាត់ទុកជាមានស្តុកជានិច្ច មិនត្រូវ check stock_count ទេ
