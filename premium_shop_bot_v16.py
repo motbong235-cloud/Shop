@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App) [v16]
-(ឯកសារនេះឈ្មោះ premium_shop_bot_v16.py — v16 ជាកំណែត្រឹមត្រូវ, v15 ក្នុងឈ្មោះ
-ឯកសារដើមមិនត្រូវគ្នានឹង docstring ទេ)
+(ឯកសារនេះឈ្មោះ premium_shop_bot_v16.py)
 ----------------------------------
 លក់ account premium (ChatGPT, Netflix, Spotify, Office365, Canva ...) តាម Telegram
 - Stock គ្រប់គ្រងតាមឯកសារ .txt (មួយបន្ទាត់ = account មួយ)
@@ -50,6 +49,12 @@ Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្ម
   product ថ្មី ជំហានទី ៥-៦, ឬកែពេលក្រោយតាម ✏️ កែ Product -> 🖼 កែ រូបភាព / 📝 កែ
   Description)។ ពេល user ចុចមើល product ណាមួយក្នុងហាង bot នឹងបង្ហាញរូបភាព (បើមាន)
   + description + តម្លៃ + ស្តុក ជាមុនសិន រួចមានប៊ូតុង '✅ ទិញឥឡូវ' ដើម្បីបន្ត។
+  បន្ថែម '🔀 បិទ/បើក វិធីទូទាត់' (admin panel + command /paytoggle) ដើម្បីឲ្យ admin អាចបិទ/បើក
+  Bakong KHQR, ABA PayWay, និង Manual QR ដោយឯករាជ្យពីគ្នា ដោយមិនចាំបាច់លុប API key ចេញពី
+  env variables ទេ (ឧ. ចង់បិទ Bakong បណ្តោះអាសន្នព្រោះ CamRapidPay down តែមិនចង់លុប
+  CAMRAPIDPAY_API_KEY ចោល)។ ការកំណត់ត្រូវបានរក្សាទុកក្នុង payment_config.json ដដែល (រួមជាមួយ
+  manual QR)។ បើវិធីទូទាត់ទាំងអស់ត្រូវបានបិទក្នុងពេលតែមួយ user ព្យាយាម /deposit នឹងឃើញសារឲ្យ
+  ទាក់ទង Admin ដោយផ្ទាល់ ជំនួសឲ្យការបង្ខំប្រើ Manual QR។
 """
 
 import os
@@ -243,6 +248,11 @@ TR = {
         "km": "អ្នកមិនទាន់មានការកម្មង់ណាមួយទេ។",
         "en": "You don't have any orders yet.",
         "zh": "您还没有任何订单。",
+    },
+    "deposit_no_method_available": {
+        "km": "⚠️ សូមទោស! បច្ចុប្បន្នមិនទាន់មានវិធីទូទាត់ណាមួយអាចប្រើបានទេ។ សូមទាក់ទង Admin ដោយផ្ទាល់។",
+        "en": "⚠️ Sorry! No payment method is currently available. Please contact the Admin directly.",
+        "zh": "⚠️ 抱歉！目前没有可用的付款方式。请直接联系管理员。",
     },
     "orders_recent_header": {
         "km": "📦 ការកម្មង់ចុងក្រោយ:\n",
@@ -1233,7 +1243,16 @@ def save_orders(d):
 # MANUAL QR DEPOSIT (សម្រាប់ហាង/subscriber ដែលគ្មាន Bakong ID ផ្ទាល់ខ្លួន)
 # ------------------------------------------------------------------
 def load_payment_config():
-    return _load(PAYMENT_CONFIG_FILE, {"manual_qr_file_id": None, "manual_qr_note": ""})
+    return _load(PAYMENT_CONFIG_FILE, {
+        "manual_qr_file_id": None,
+        "manual_qr_note": "",
+        # បិទ/បើក វិធីទូទាត់ (admin កំណត់តាម ADMIN_BTN_PAYTOGGLE) — default បើកទាំងអស់។
+        # ចំណាំ: methods ណាមួយក៏ដោយ ត្រូវការ env var/API key ដែលត្រូវគ្នាកំណត់រួចជាមុនផងដែរ
+        # (ឧ. bakong_enabled=True តែគ្មាន CAMRAPIDPAY_API_KEY នៅតែមិនអាចប្រើបានទេ)
+        "bakong_enabled": True,
+        "aba_enabled": True,
+        "manual_enabled": True,
+    })
 
 
 def save_payment_config(d):
@@ -1251,6 +1270,25 @@ def set_manual_qr(file_id, note=None):
         cfg["manual_qr_file_id"] = file_id
         if note is not None:
             cfg["manual_qr_note"] = note
+        save_payment_config(cfg)
+        return cfg
+
+
+# --- បិទ/បើក វិធីទូទាត់ ---
+PAYMENT_METHOD_KEYS = ("bakong", "aba", "manual")
+
+
+def is_payment_method_enabled(method):
+    """True បើវិធីទូទាត់ (bakong/aba/manual) មិនទាន់ត្រូវបានបិទដោយ admin តាម
+    ADMIN_BTN_PAYTOGGLE ទេ (default = True បើមិនទាន់កំណត់អ្វីសោះ)"""
+    cfg = load_payment_config()
+    return bool(cfg.get(f"{method}_enabled", True))
+
+
+def set_payment_method_enabled(method, enabled):
+    with _lock:
+        cfg = load_payment_config()
+        cfg[f"{method}_enabled"] = bool(enabled)
         save_payment_config(cfg)
         return cfg
 
@@ -1295,13 +1333,15 @@ def remove_notify_chat_id(chat_id):
 
 
 def has_auto_bakong():
-    """True បើហាងនេះមាន Bakong auto-payment (CAMRAPIDPAY_API_KEY កំណត់ហើយ)"""
-    return bool(CAMRAPIDPAY_API_KEY)
+    """True បើហាងនេះមាន Bakong auto-payment (CAMRAPIDPAY_API_KEY កំណត់ហើយ) ហើយ admin
+    មិនទាន់បិទវិធីនេះតាម ADMIN_BTN_PAYTOGGLE ទេ"""
+    return bool(CAMRAPIDPAY_API_KEY) and is_payment_method_enabled("bakong")
 
 
 def has_aba_payway():
-    """True បើហាងនេះមាន ABA PayWay auto-payment តាម KHMER SYSTEM (ABA_API_KEY + ABA_MERCHANT_ID កំណត់ហើយ)"""
-    return bool(ABA_API_KEY and ABA_MERCHANT_ID)
+    """True បើហាងនេះមាន ABA PayWay auto-payment តាម KHMER SYSTEM (ABA_API_KEY + ABA_MERCHANT_ID
+    កំណត់ហើយ) ហើយ admin មិនទាន់បិទវិធីនេះតាម ADMIN_BTN_PAYTOGGLE ទេ"""
+    return bool(ABA_API_KEY and ABA_MERCHANT_ID) and is_payment_method_enabled("aba")
 
 
 def load_pending_deposits():
@@ -2170,6 +2210,7 @@ ADMIN_BTN_BROADCAST = "📢 ផ្ញើសារទៅគ្រប់គ្ន�
 ADMIN_BTN_EMOJI = "🎭 Setup Emoji"
 ADMIN_BTN_SETQR = "🖼 កំណត់ QR ទូទាត់ដោយដៃ"
 ADMIN_BTN_SETNOTIFY = "🔔 កំណត់ Channel ជូនដំណឹង"
+ADMIN_BTN_PAYTOGGLE = "🔀 បិទ/បើក វិធីទូទាត់"
 
 
 def reply_kb_for(uid):
@@ -2189,7 +2230,7 @@ def reply_kb_for(uid):
         kb.add(kbtn(ADMIN_BTN_MSGUSER, style="primary"), kbtn(ADMIN_BTN_BROADCAST, style="primary"))
         kb.add(kbtn(ADMIN_BTN_FINDUSER, style="primary"))
         kb.add(kbtn(ADMIN_BTN_EMOJI, style="primary"), kbtn(ADMIN_BTN_SETQR, style="primary"))
-        kb.add(kbtn(ADMIN_BTN_SETNOTIFY, style="primary"))
+        kb.add(kbtn(ADMIN_BTN_SETNOTIFY, style="primary"), kbtn(ADMIN_BTN_PAYTOGGLE, style="primary"))
     return kb
 
 
@@ -3131,6 +3172,25 @@ def callback_router(call):
             reply_markup=admin_delete_confirm_kb(key),
         )
 
+    elif data.startswith("paytoggle_"):
+        if not is_admin(uid):
+            return
+        method = data[len("paytoggle_"):]
+        if method not in PAYMENT_METHOD_KEYS:
+            bot.answer_callback_query(call.id, "❌ វិធីមិនត្រឹមត្រូវ", show_alert=True)
+            return
+        new_state = not is_payment_method_enabled(method)
+        set_payment_method_enabled(method, new_state)
+        try:
+            bot.edit_message_text(
+                _paytoggle_text(), chat_id, call.message.message_id, reply_markup=_paytoggle_kb(),
+            )
+        except Exception:
+            pass
+        state_label = "✅ បើក" if new_state else "❌ បិទ"
+        bot.answer_callback_query(call.id, f"{_PAYTOGGLE_LABELS[method]}: {state_label}")
+        return
+
     bot.answer_callback_query(call.id)
 
 
@@ -3389,7 +3449,8 @@ def _handle_email_order_reject(call, order_id):
 def handle_deposit(uid, chat_id, amount, user_obj, call=None):
     """• បើមានវិធីទូទាត់ស្វ័យប្រវត្តិច្រើនជាង ១ (Bakong KHQR + ABA PayWay) → ឲ្យ user ជ្រើសរើសមុន
     • បើមានតែមួយ → ប្រើវិធីនោះផ្ទាល់ (auto-detect)
-    • បើគ្មានវិធីណាមួយកំណត់ → ប្រើ QR ផ្ទាល់ខ្លួនដែល admin កំណត់ដោយដៃ + ឲ្យ user ផ្ញើវិក័យប័ត្រមកផ្ទៀងផ្ទាត់ដោយដៃ"""
+    • បើគ្មានវិធីណាមួយកំណត់ (ឬ admin បិទទាំងអស់តាម ADMIN_BTN_PAYTOGGLE) → ប្រើ QR ផ្ទាល់ខ្លួនដែល
+      admin កំណត់ដោយដៃ + ឲ្យ user ផ្ញើវិក័យប័ត្រមកផ្ទៀងផ្ទាត់ដោយដៃ (លុះត្រាតែ admin បិទ Manual QR ផងដែរ)"""
     bakong_ok = has_auto_bakong()
     aba_ok = has_aba_payway()
     if bakong_ok and aba_ok:
@@ -3400,6 +3461,23 @@ def handle_deposit(uid, chat_id, amount, user_obj, call=None):
         return
     if bakong_ok:
         _handle_deposit_auto(uid, chat_id, amount, user_obj, call=call)
+        return
+    if not is_payment_method_enabled("manual"):
+        text = t(uid, "deposit_no_method_available")
+        if call:
+            bot.answer_callback_query(call.id, text, show_alert=True)
+        else:
+            bot.send_message(chat_id, text)
+        if ADMIN_ID:
+            try:
+                bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>User ព្យាយាមដាក់លុយ ${amount:.2f} តែវិធីទូទាត់ទាំងអស់ត្រូវបានបិទ!</b>\n"
+                    f"👤 {public_user_label(user_obj)} (<code>{uid}</code>)\n\n"
+                    f"សូមចុច {ADMIN_BTN_PAYTOGGLE} ដើម្បីបើកវិធីទូទាត់ណាមួយឡើងវិញ។",
+                )
+            except Exception:
+                pass
         return
     handle_deposit_manual(uid, chat_id, amount, user_obj, call=call)
 
@@ -4239,6 +4317,79 @@ def admin_setnotify_step(message):
     else:
         add_notify_chat_id(chat_id)
         bot.send_message(message.chat.id, f"✅ បានបន្ថែម <code>{chat_id}</code> ជាកន្លែងជូនដំណឹងរួចរាល់!\n\n{_notify_list_text()}")
+
+
+# ------------------------------------------------------------------
+# បិទ/បើក វិធីទូទាត់ (ADMIN_BTN_PAYTOGGLE) — admin អាចបិទ/បើក Bakong KHQR,
+# ABA PayWay, ឬ Manual QR ដោយឯករាជ្យពីគ្នា ដោយមិនចាំបាច់លុប env var ចោលទេ
+# (ឧ. ចង់បិទ Bakong បណ្តោះអាសន្នព្រោះ CamRapidPay down តែមិនចង់លុប API key)
+# ------------------------------------------------------------------
+_PAYTOGGLE_LABELS = {
+    "bakong": "Bakong KHQR (CamRapidPay)",
+    "aba": "ABA PayWay (KHMER SYSTEM)",
+    "manual": "QR ទូទាត់ដោយដៃ",
+}
+
+
+def _paytoggle_status_lines():
+    lines = []
+    for method in PAYMENT_METHOD_KEYS:
+        label = _PAYTOGGLE_LABELS[method]
+        if method == "bakong":
+            configured = bool(CAMRAPIDPAY_API_KEY)
+        elif method == "aba":
+            configured = bool(ABA_API_KEY and ABA_MERCHANT_ID)
+        else:
+            configured = True  # manual QR មិនអាស្រ័យ env var ទេ (កំណត់តាម ➕ SETQR)
+        enabled = is_payment_method_enabled(method)
+        if not configured:
+            status = "⚪ មិនទាន់កំណត់ (គ្មាន API key ក្នុង env)"
+        elif enabled:
+            status = "✅ បើក"
+        else:
+            status = "❌ បិទ"
+        lines.append(f"├ {label}: {status}")
+    return "\n".join(lines)
+
+
+def _paytoggle_kb():
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for method in PAYMENT_METHOD_KEYS:
+        enabled = is_payment_method_enabled(method)
+        action_label = "❌ បិទ" if enabled else "✅ បើក"
+        kb.add(pbtn(
+            f"{action_label} — {_PAYTOGGLE_LABELS[method]}",
+            callback_data=f"paytoggle_{method}",
+            style="danger" if enabled else "success",
+        ))
+    return kb
+
+
+def _paytoggle_text():
+    return (
+        f"🔀 <b>បិទ/បើក វិធីទូទាត់</b>\n\n"
+        f"{_paytoggle_status_lines()}\n\n"
+        f"ចុចប៊ូតុងខាងក្រោមដើម្បីបិទ/បើកវិធីនីមួយៗ។ វិធីណាមួយបិទ user នឹងលែងឃើញជាជម្រើសពេលចុច /deposit "
+        f"(បើវិធីទាំងអស់ត្រូវបានបិទ user នឹងទទួលបានសារឲ្យទាក់ទង Admin ដោយផ្ទាល់)។"
+    )
+
+
+def _start_paytoggle_flow(chat_id):
+    bot.send_message(chat_id, _paytoggle_text(), reply_markup=_paytoggle_kb())
+
+
+@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_PAYTOGGLE))
+def reply_admin_paytoggle(message):
+    if not is_admin(message.from_user.id):
+        return
+    _start_paytoggle_flow(message.chat.id)
+
+
+@bot.message_handler(commands=["paytoggle"])
+def cmd_paytoggle(message):
+    if not is_admin(message.from_user.id):
+        return
+    _start_paytoggle_flow(message.chat.id)
 
 
 # ------------------------------------------------------------------
