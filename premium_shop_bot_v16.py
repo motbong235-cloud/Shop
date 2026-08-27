@@ -391,6 +391,11 @@ TR = {
     "pay_method_bakong_btn": {"km": "🏦 Bakong KHQR", "en": "🏦 Bakong KHQR", "zh": "🏦 Bakong KHQR"},
     "pay_method_aba_btn": {"km": "💳 ABA PayWay", "en": "💳 ABA PayWay", "zh": "💳 ABA PayWay"},
     "open_payment_page_btn": {"km": "🔗 បើកទំព័រទូទាត់", "en": "🔗 Open Payment Page", "zh": "🔗 打开支付页面"},
+    "open_aba_app_btn": {
+        "km": "🚀 បើក ABA App ស្កេនស្វ័យប្រវត្តិ",
+        "en": "🚀 Open ABA App to Auto-Scan",
+        "zh": "🚀 打开 ABA App 自动扫码",
+    },
     "retry_btn": {"km": "🔁 ព្យាយាមម្តងទៀត", "en": "🔁 Retry", "zh": "🔁 重试"},
     "deposit_fail_generic": {
         "km": "{err}\n\nសូមព្យាយាមម្តងទៀត បើ error នៅតែកើតឡើង ជា server ខាង gateway ខ្លួនឯងគាំង (មិនមែនកូដឯង)។",
@@ -1740,6 +1745,34 @@ def aba_generate_qr(amount, username, _attempt=1):
     except Exception as e:
         _last_aba_error = f"{type(e).__name__}: {e}"
         print(f"[aba_generate_qr] error: {_last_aba_error}", flush=True)
+    return None
+
+
+def _build_aba_app_deeplink(data):
+    """បើ response ពី khmer-system.com មាន field deeplink ត្រង់ៗ (ឧ. abapay_deeplink /
+    deeplink — ដូច ABA PayWay ផ្លូវការតែងតែផ្ញើមកជាមួយ qrString) ត្រឡប់វាភ្លាម។ បើគ្មាន
+    ប៉ុន្តែមាន raw KHQR string (qr_string / qrString / qr) ត្រូវបង្កើត deep link ដោយខ្លួនឯង
+    តាម scheme ផ្លូវការរបស់ ABA Mobile (abamobilebank://ababank.com?type=payway&qrcode=...)
+    ដែលនឹងបើក ABA App ដោយផ្ទាល់ ត្រៀមស្កេន QR នេះស្វ័យប្រវត្តិ (មិនចាំបាច់ user បើក App
+    ខ្លួនឯង ហើយស្កេនដោយដៃទៀតទេ)។ ត្រឡប់ None បើរកមិនឃើញ field ណាមួយសមរម្យទេ — ក្នុងករណីនេះ
+    ត្រូវពិនិត្យ log (_last_aba_error / print ខាងក្រោម) ដើម្បីមើលថា khmer-system.com
+    ត្រឡប់ field អ្វីខ្លះមកវិញ ក្នុងករណី field name ខុសពីការស្មាន។"""
+    if not isinstance(data, dict):
+        return None
+    for key in ("abapay_deeplink", "aba_deeplink", "deeplink", "deep_link"):
+        val = data.get(key)
+        if val and str(val).strip():
+            return str(val).strip()
+    qr_raw = None
+    for key in ("qr_string", "qrString", "qr_code", "qrCode", "qr"):
+        val = data.get(key)
+        if val and str(val).strip():
+            qr_raw = str(val).strip()
+            break
+    if qr_raw:
+        from urllib.parse import quote
+        return f"abamobilebank://ababank.com?type=payway&qrcode={quote(qr_raw, safe='')}"
+    print(f"[_build_aba_app_deeplink] គ្មាន deeplink/qr_string field ក្នុង response — keys ដែលមាន: {list(data.keys())}", flush=True)
     return None
 
 
@@ -3530,11 +3563,17 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
     payment_id = data.get("payment_id", "")
     card_image = data.get("card_image") or data.get("qr_image")
     pay_url = data.get("pay_url")
+    aba_app_link = _build_aba_app_deeplink(data)
 
     kb = None
-    if pay_url:
-        kb = types.InlineKeyboardMarkup()
-        kb.add(pbtn(t(uid, "open_payment_page_btn"), url=pay_url, style="primary"))
+    if aba_app_link or pay_url:
+        kb = types.InlineKeyboardMarkup(row_width=1)
+        # ប៊ូតុងនេះចុចម្តង បើក ABA App ដោយផ្ទាល់ ត្រៀម QR នេះឲ្យស្កេនស្វ័យប្រវត្តិ
+        # (ដំណើរការតែលើទូរស័ព្ទដែលបានដំឡើង ABA Mobile រួច — computer/desktop នឹងបើកមិនចេញទេ)
+        if aba_app_link:
+            kb.add(pbtn(t(uid, "open_aba_app_btn"), url=aba_app_link, style="primary"))
+        if pay_url:
+            kb.add(pbtn(t(uid, "open_payment_page_btn"), url=pay_url, style="primary"))
 
     caption = t(uid, "auto_qr_caption_aba", amount=amount, ref=payment_id or "-")
     if len(caption) > 1000:  # Telegram photo-caption limit = 1024 chars
