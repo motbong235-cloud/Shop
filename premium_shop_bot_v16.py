@@ -3425,19 +3425,24 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
     if len(caption) > 1000:  # Telegram photo-caption limit = 1024 chars
         caption = caption[:1000] + "…"
 
-    # khmer-system.com ជួនកាលត្រឡប់ card_image ជា base64 data-URI (data:image/...;base64,....)
-    # ជាជាង HTTP URL ធម្មតា — បើផ្ញើ string នេះទៅ send_photo ត្រង់ៗ Telegram នឹង
-    # បដិសេធជា "MESSAGE_TOO_LONG" ព្រោះវែងហួស limit របស់ field URL/file_id។
-    # ត្រូវ decode ជា raw bytes ជាមុនសិន ទើបផ្ញើជា photo file បាន។
-    photo_payload = card_image
-    if card_image and str(card_image).startswith("data:image"):
-        try:
-            b64_part = str(card_image).split(",", 1)[1]
-            photo_payload = io.BytesIO(base64.b64decode(b64_part))
-            photo_payload.name = "aba_payment.png"
-        except Exception as e:
-            print(f"[_handle_deposit_aba] base64 decode failed: {e}", flush=True)
-            photo_payload = None
+    # khmer-system.com ត្រឡប់ card_image ជា base64 (មានពេលមាន prefix "data:image/...;base64,"
+    # មានពេលគ្មាន prefix ទាល់តែសោះ — ជា raw base64 string ត្រង់ៗ) ជាជាង HTTP URL ធម្មតា។
+    # បើផ្ញើ string វែងនេះទៅ send_photo ត្រង់ៗ Telegram នឹងបដិសេធជា "MESSAGE_TOO_LONG"
+    # ព្រោះវែងហួស limit របស់ field URL/file_id។ ត្រូវ decode ជា raw bytes ជាមុនសិន
+    # មិនអាស្រ័យលើ prefix — គ្រាន់តែមើលថាតើវាជា http(s) URL ធម្មតា ឬអត់។
+    photo_payload = None
+    if card_image:
+        img_str = str(card_image).strip()
+        if img_str.lower().startswith(("http://", "https://")):
+            photo_payload = img_str
+        else:
+            try:
+                b64_part = img_str.split(",", 1)[1] if img_str.startswith("data:") else img_str
+                photo_payload = io.BytesIO(base64.b64decode(b64_part, validate=False))
+                photo_payload.name = "aba_payment.png"
+            except Exception as e:
+                print(f"[_handle_deposit_aba] base64 decode failed: {e}", flush=True)
+                photo_payload = None
 
     sent_ok = False
     if photo_payload:
@@ -3446,6 +3451,7 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
             sent_ok = True
         except Exception as e:
             print(f"[_handle_deposit_aba] send_photo failed: {e}", flush=True)
+            notify_admin_error("_handle_deposit_aba send_photo", e)
     if not sent_ok:
         if pay_url:
             bot.send_message(chat_id, caption, reply_markup=kb)
