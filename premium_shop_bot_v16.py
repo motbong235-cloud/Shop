@@ -52,6 +52,7 @@ Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្ម
 import os
 import re
 import io
+import base64
 import html
 import json
 import time
@@ -3421,11 +3422,27 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
         kb.add(pbtn(t(uid, "open_payment_page_btn"), url=pay_url, style="primary"))
 
     caption = t(uid, "auto_qr_caption_aba", amount=amount, ref=payment_id or "-")
+    if len(caption) > 1000:  # Telegram photo-caption limit = 1024 chars
+        caption = caption[:1000] + "…"
+
+    # khmer-system.com ជួនកាលត្រឡប់ card_image ជា base64 data-URI (data:image/...;base64,....)
+    # ជាជាង HTTP URL ធម្មតា — បើផ្ញើ string នេះទៅ send_photo ត្រង់ៗ Telegram នឹង
+    # បដិសេធជា "MESSAGE_TOO_LONG" ព្រោះវែងហួស limit របស់ field URL/file_id។
+    # ត្រូវ decode ជា raw bytes ជាមុនសិន ទើបផ្ញើជា photo file បាន។
+    photo_payload = card_image
+    if card_image and str(card_image).startswith("data:image"):
+        try:
+            b64_part = str(card_image).split(",", 1)[1]
+            photo_payload = io.BytesIO(base64.b64decode(b64_part))
+            photo_payload.name = "aba_payment.png"
+        except Exception as e:
+            print(f"[_handle_deposit_aba] base64 decode failed: {e}", flush=True)
+            photo_payload = None
 
     sent_ok = False
-    if card_image:
+    if photo_payload:
         try:
-            bot.send_photo(chat_id, card_image, caption=caption, reply_markup=kb)
+            bot.send_photo(chat_id, photo_payload, caption=caption, reply_markup=kb)
             sent_ok = True
         except Exception as e:
             print(f"[_handle_deposit_aba] send_photo failed: {e}", flush=True)
