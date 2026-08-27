@@ -1,44 +1,44 @@
 services:
   - type: web
-    name: kai-premium-shop-bot
+    name: premium-shop-bot
     runtime: python
     plan: starter
+    region: singapore
+    branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python Kai.py
+    startCommand: python premium_shop_bot_v16.py
+    healthCheckPath: /
+    disk:
+      name: premium-shop-bot-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
+      # --- Core (ចាំបាច់) ---
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_ID
         sync: false
       - key: STORE_NAME
-        value: "𝑩𝑨𝑩𝒀 𝑺𝑻𝑶𝑹𝑬"
+        value: Kairozen Store
       - key: DATA_DIR
         value: /var/data
+
+      # --- Bakong KHQR (CamRapidPay) — deposit ស្វ័យប្រវត្តិទី ១ ---
+      - key: CAMRAPIDPAY_API_KEY
+        sync: false
+
+      # --- ABA PayWay (KHMER SYSTEM) — deposit ស្វ័យប្រវត្តិទី ២ ---
+      - key: ABA_API_KEY
+        sync: false
+      - key: ABA_MERCHANT_ID
+        sync: false
+      # - key: ABA_BASE_URL
+      #   value: https://khmer-system.com   # ប្រើ default បើមិនកំណត់
+
+      # --- Optional ---
       - key: LOW_STOCK_THRESHOLD
         value: "3"
       - key: NOTIFY_CHAT_IDS
         sync: false
-
-      # --- Bakong KHQR (CamRapidPay) — auto deposit ជម្រើសទី ១ ---
-      - key: CAMRAPIDPAY_API_KEY
-        sync: false
-      - key: CAMRAPID_CREATE_URL
-        value: https://pay.camrapidpay.com/api/v1/khqr/create-payments
-      - key: CAMRAPID_CHECK_URL
-        value: https://pay.camrapidpay.com/check-transaction-api
-      # PUBLIC_BASE_URL មិនចាំបាច់កំណត់ដោយដៃទេ — Render ដាក់ RENDER_EXTERNAL_URL ស្វ័យប្រវត្តិ
-
-      # --- ABA PayWay (KHMER SYSTEM — khmer-system.com) — auto deposit ជម្រើសទី ២ ---
-      - key: ABA_API_KEY
-        sync: false
-      - key: ABA_MERCHANT_ID
-        value: r72mCt
-      - key: ABA_BASE_URL
-        value: https://khmer-system.com
-      - key: ABA_CHECK_URL
-        value: https://khmer-system.com/aba-api/check-payment
-
-    disk:
-      name: kai-data
-      mountPath: /var/data
-      sizeGB: 1
+      - key: PUBLIC_BASE_URL
+        sync: false   # ទុកទទេបាន — RENDER_EXTERNAL_URL នឹងបំពេញស្វ័យប្រវត្តិ
