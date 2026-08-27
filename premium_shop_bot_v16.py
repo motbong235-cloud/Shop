@@ -1557,6 +1557,15 @@ _http = requests.Session()
 _http.mount("https://", requests.adapters.HTTPAdapter(
     max_retries=requests.adapters.Retry(total=2, backoff_factor=0.5)
 ))
+# គេហទំព័រមួយចំនួន (ឧ. khmer-system.com) មាន firewall/security plugin (Wordfence,
+# Cloudflare ។ល។) ដែល block request ដែលគ្មាន User-Agent ស្រដៀង browser ធម្មតា —
+# default របស់ requests library ("python-requests/x.x") ត្រូវបាន block ភ្លាមៗ
+# ជា HTTP 403 (HTML error page, មិនមែន JSON) ។ កំណត់ User-Agent ជា browser ធម្មតា
+# ដើម្បីកុំឲ្យត្រូវ block ។
+_http.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+})
 
 
 _last_camrapid_error = ""
@@ -1659,7 +1668,14 @@ def aba_generate_qr(amount, username, _attempt=1):
         try:
             data = r.json()
         except Exception:
-            _last_aba_error = f"HTTP {r.status_code} (non-JSON): {r.text[:300]}"
+            body = r.text.strip()
+            if body.lower().startswith(("<!doctype", "<html")):
+                _last_aba_error = (
+                    f"HTTP {r.status_code} — server ត្រឡប់ HTML page (ប្រហែលជា firewall/WAF "
+                    f"block request, ឬ URL/endpoint ខុស) ជាជាង JSON"
+                )
+            else:
+                _last_aba_error = f"HTTP {r.status_code} (non-JSON): {body[:300]}"
             print(f"[aba_generate_qr] {_last_aba_error}", flush=True)
             if r.status_code >= 500 and _attempt < 2:
                 time.sleep(1.5)
@@ -3427,7 +3443,7 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
                 )
             except Exception:
                 pass
-        _fail(t(uid, "qr_create_failed_aba", detail=_last_aba_error[:180]))
+        _fail(t(uid, "qr_create_failed_aba", detail=html.escape(_last_aba_error[:180])))
         return
 
     payment_id = data.get("payment_id", "")
@@ -3525,7 +3541,7 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
 
     data = camrapid_create(amount, ref)
     if not data:
-        _fail(t(uid, "qr_create_failed", detail=_last_camrapid_error[:180]))
+        _fail(t(uid, "qr_create_failed", detail=html.escape(_last_camrapid_error[:180])))
         return
 
     qr_string = data.get("qr_code", "")
