@@ -19,6 +19,9 @@ Kairozen Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្ម
   ABA_API_KEY          - Profile Key របស់ KHMER SYSTEM (khmer-system.com/operator/profile) — ចាំបាច់
                           សម្រាប់ deposit តាម ABA PayWay
   ABA_MERCHANT_ID      - Merchant ID របស់ KHMER SYSTEM (ឧ. r72mCt)
+  ABA_CREATE_URL       - (ស្រេចចិត្ត) URL ពេញលេញសម្រាប់បង្កើត ABA payment បើ endpoint
+                          ខុសពី default (https://khmer-system.com/aba)
+  ABA_CHECK_URL        - (ស្រេចចិត្ត) URL ពេញលេញសម្រាប់ check payment status
   (បើកំណត់ទាំង CAMRAPIDPAY_API_KEY និង ABA_API_KEY ព្រមគ្នា bot នឹងឲ្យ user ជ្រើសរើសវិធីទូទាត់ពេល /deposit)
 
 ចំណាំ (ABA PayWay — KHMER SYSTEM): បន្ថែម ABA PayWay ជាវិធីទូទាត់ស្វ័យប្រវត្តិទី ២ (ក្រៅពី Bakong
@@ -83,7 +86,7 @@ CAMRAPID_WEBHOOK_URL = os.environ.get(
 ABA_API_KEY = os.environ.get("ABA_API_KEY", "")       # Profile Key (ឧ. PK_xxxxxxxx)
 ABA_MERCHANT_ID = os.environ.get("ABA_MERCHANT_ID", "")  # Merchant ID (ឧ. r72mCt)
 ABA_BASE_URL = os.environ.get("ABA_BASE_URL", "https://khmer-system.com")
-ABA_CREATE_URL = f"{ABA_BASE_URL}/aba"
+ABA_CREATE_URL = os.environ.get("ABA_CREATE_URL", f"{ABA_BASE_URL}/aba-api/generate-qr")
 ABA_CHECK_URL = os.environ.get("ABA_CHECK_URL", f"{ABA_BASE_URL}/aba-api/check-payment")
 STORE_NAME = os.environ.get("STORE_NAME", "Kairozen Store")  # ឈ្មោះហាង — hardcode ជា default តែអាច override តាម env
 # ID របស់ channel/group ដែលចង់ឲ្យ bot ផ្ញើសារជូនដំណឹងស្វ័យប្រវត្តិ ពេលមាន deposit
