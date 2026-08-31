@@ -503,6 +503,22 @@ TR = {
         "en": "⌛ QR expired or payment not received. Please try /deposit again",
         "zh": "⌛ 二维码已过期或尚未支付。请重新尝试 /deposit",
     },
+    "deposit_already_pending": {
+        "km": "⏳ អ្នកមាន QR ដេប៉ូ <b>${amount:.2f}</b> កំពុង pending រួចហើយ!\n"
+              "សូម Scan/ទូទាត់ QR ខាងលើ ឬរង់ចាំវាឲ្យផុតកំណត់សិន (~{minutes} នាទី, នៅសល់ប្រហែល {remaining} វិនាទី) "
+              "មុននឹងបង្កើត QR ថ្មី។\n\n🛍 ចន្លោះពេលនេះ អ្នកអាចចូលទៅហាងទិញឥវ៉ាន់ផ្សេងបានធម្មតា (ប្រើ wallet balance ដែលមានស្រាប់)។",
+        "en": "⏳ You already have a pending deposit QR for <b>${amount:.2f}</b>!\n"
+              "Please scan/pay the QR above, or wait for it to expire (~{minutes} min, about {remaining}s left) "
+              "before creating a new one.\n\n🛍 Meanwhile, you can still browse and buy from the shop using your current wallet balance.",
+        "zh": "⏳ 您已有一个待处理的充值二维码 <b>${amount:.2f}</b>！\n"
+              "请扫描/支付上方二维码，或等待其过期(~{minutes} 分钟，约剩 {remaining} 秒)后再创建新的。\n\n"
+              "🛍 与此同时，您仍可使用现有钱包余额前往商店购买。",
+    },
+    "goto_shop_btn": {
+        "km": "🛍 ទៅហាងទិញឥឡូវ",
+        "en": "🛍 Go to Shop",
+        "zh": "🛍 立即前往商店",
+    },
     "lang_choose": {
         "km": "🌐 សូមជ្រើសរើសភាសា / Please choose your language / 请选择语言:",
         "en": "🌐 សូមជ្រើសរើសភាសា / Please choose your language / 请选择语言:",
@@ -2004,7 +2020,62 @@ def build_qr_image(qr_string, amount=None, ref=None, label=None, subtitle=None, 
             return None
 
 
+# ------------------------------------------------------------------
+# ACTIVE AUTO-DEPOSIT TRACKING (Bakong KHQR + ABA PayWay តែប៉ុណ្ណោះ)
+# ------------------------------------------------------------------
+# ទប់ស្កាត់ user មិនឲ្យបង្កើត QR ដេប៉ូថ្មីម្តងទៀត ខណៈ QR មុននៅ pending —
+# ត្រូវរង់ចាំវាឲ្យផុតកំណត់ (ឬទូទាត់រួច) សិន។ មិន apply លើ Manual QR ទេ។
+_active_auto_deposits = {}
+_active_auto_deposits_lock = threading.Lock()
+
+
+def _set_active_auto_deposit(uid, amount, reference, max_minutes=5):
+    with _active_auto_deposits_lock:
+        _active_auto_deposits[uid] = {
+            "amount": amount, "reference": reference,
+            "deadline": time.time() + max_minutes * 60,
+            "max_minutes": max_minutes,
+        }
+
+
+def _get_active_auto_deposit(uid):
+    """ត្រឡប់ dict នៃ deposit កំពុង pending បើនៅមិនទាន់ផុតកំណត់ ក៏ clear ចោលបើផុតរួច។"""
+    with _active_auto_deposits_lock:
+        rec = _active_auto_deposits.get(uid)
+        if not rec:
+            return None
+        if time.time() >= rec["deadline"]:
+            _active_auto_deposits.pop(uid, None)
+            return None
+        return rec
+
+
+def _clear_active_auto_deposit(uid):
+    with _active_auto_deposits_lock:
+        _active_auto_deposits.pop(uid, None)
+
+
+def _notify_deposit_already_pending(uid, chat_id, rec, call=None):
+    """ជូនដំណឹង user ថាមាន QR ដេប៉ូ auto (Bakong/ABA) កំពុង pending រួចហើយ —
+    ព្រម button ឲ្យចូលទៅហាងទិញឥវ៉ាន់ផ្ទាល់ខណៈកំពុងរង់ចាំ។"""
+    remaining = max(0, int(rec["deadline"] - time.time()))
+    text = t(
+        uid, "deposit_already_pending",
+        amount=rec["amount"], minutes=rec.get("max_minutes", 5), remaining=remaining,
+    )
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(pbtn(t(uid, "goto_shop_btn"), callback_data="qr_goshop", style="success"))
+    if call:
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+    bot.send_message(chat_id, text, reply_markup=kb)
+
+
 def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5, checker=None):
+    # NOTE: _clear_active_auto_deposit(uid) ត្រូវបានហៅនៅ finally ខាងក្រោមបំផុត
+    # មិនថា deposit នេះជោគជ័យ ឬផុតកំណត់ ឬកើត exception ក៏ដោយ ដើម្បីអោយ user អាចបង្កើត QR ថ្មីបាន
     try:
         checker = checker or camrapid_check
         deadline = time.time() + max_minutes * 60
@@ -2042,6 +2113,8 @@ def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5
     except Exception as e:
         print(f"[poll_deposit] {e}", flush=True)
         notify_admin_error(f"poll_deposit (uid={uid}, amount={amount})", e)
+    finally:
+        _clear_active_auto_deposit(uid)
 
 
 # ------------------------------------------------------------------
@@ -2892,6 +2965,15 @@ def callback_router(call):
         bot.answer_callback_query(call.id, t(uid, "out_of_stock_alert", name=name), show_alert=True)
         return
 
+    elif data == "qr_goshop":
+        # ប៊ូតុង "ទៅហាងទិញឥឡូវ" ដែលភ្ជាប់នៅលើសារ QR ដេប៉ូ (ឬសារ pending) — ផ្ញើសារថ្មី
+        # ជំនួសការ edit ព្រោះសារដើមអាចជា photo (QR) ដែល edit_message_text ធ្វើការមិនកើត
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+        bot.send_message(chat_id, t(uid, "shop_choose"), reply_markup=products_kb(uid))
+
     elif data == "dep_custom":
         msg = bot.send_message(chat_id, t(uid, "custom_amount_prompt", min=DEPOSIT_MIN_AMOUNT))
         bot.register_next_step_handler(msg, _deposit_custom_amount_step, call.from_user)
@@ -3527,6 +3609,11 @@ def _show_payment_method_picker(uid, chat_id, amount, call=None):
 
 
 def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
+    pending_rec = _get_active_auto_deposit(uid)
+    if pending_rec:
+        _notify_deposit_already_pending(uid, chat_id, pending_rec, call=call)
+        return
+
     def _fail(err_text):
         if call:
             # Telegram limits callback-query alert text to 200 chars — err_text (Khmer
@@ -3565,15 +3652,15 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
     pay_url = data.get("pay_url")
     aba_app_link = _build_aba_app_deeplink(data)
 
-    kb = None
-    if aba_app_link or pay_url:
-        kb = types.InlineKeyboardMarkup(row_width=1)
-        # ប៊ូតុងនេះចុចម្តង បើក ABA App ដោយផ្ទាល់ ត្រៀម QR នេះឲ្យស្កេនស្វ័យប្រវត្តិ
-        # (ដំណើរការតែលើទូរស័ព្ទដែលបានដំឡើង ABA Mobile រួច — computer/desktop នឹងបើកមិនចេញទេ)
-        if aba_app_link:
-            kb.add(pbtn(t(uid, "open_aba_app_btn"), url=aba_app_link, style="primary"))
-        if pay_url:
-            kb.add(pbtn(t(uid, "open_payment_page_btn"), url=pay_url, style="primary"))
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    # ប៊ូតុងនេះចុចម្តង បើក ABA App ដោយផ្ទាល់ ត្រៀម QR នេះឲ្យស្កេនស្វ័យប្រវត្តិ
+    # (ដំណើរការតែលើទូរស័ព្ទដែលបានដំឡើង ABA Mobile រួច — computer/desktop នឹងបើកមិនចេញទេ)
+    if aba_app_link:
+        kb.add(pbtn(t(uid, "open_aba_app_btn"), url=aba_app_link, style="primary"))
+    if pay_url:
+        kb.add(pbtn(t(uid, "open_payment_page_btn"), url=pay_url, style="primary"))
+    # ឲ្យ user អាចចូលទៅហាងទិញឥវ៉ាន់ផ្ទាល់ខណៈកំពុងរង់ចាំ QR នេះឲ្យបានទូទាត់
+    kb.add(pbtn(t(uid, "goto_shop_btn"), callback_data="qr_goshop", style="success"))
 
     caption = t(uid, "auto_qr_caption_aba", amount=amount, ref=payment_id or "-")
     if len(caption) > 1000:  # Telegram photo-caption limit = 1024 chars
@@ -3631,6 +3718,7 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
         except Exception:
             pass
 
+    _set_active_auto_deposit(uid, amount, payment_id)
     th = threading.Thread(
         target=poll_deposit,
         args=(uid, chat_id, amount, payment_id, public_user_label(user_obj)),
@@ -3641,6 +3729,11 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
 
 
 def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
+    pending_rec = _get_active_auto_deposit(uid)
+    if pending_rec:
+        _notify_deposit_already_pending(uid, chat_id, pending_rec, call=call)
+        return
+
     def _fail(err_text):
         if call:
             alert_text = err_text if len(err_text) <= 200 else err_text[:197] + "…"
@@ -3667,10 +3760,11 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
     qr_string = data.get("qr_code", "")
     payment_url = data.get("payment_url", "")
 
-    kb = None
+    kb = types.InlineKeyboardMarkup(row_width=1)
     if payment_url:
-        kb = types.InlineKeyboardMarkup()
         kb.add(pbtn(t(uid, "open_payment_page_btn"), url=payment_url, style="primary"))
+    # ឲ្យ user អាចចូលទៅហាងទិញឥវ៉ាន់ផ្ទាល់ខណៈកំពុងរង់ចាំ QR នេះឲ្យបានទូទាត់
+    kb.add(pbtn(t(uid, "goto_shop_btn"), callback_data="qr_goshop", style="success"))
 
     img_buf = build_qr_image(
         qr_string, amount=amount, ref=ref_disp,
@@ -3701,6 +3795,7 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
         except Exception:
             pass
 
+    _set_active_auto_deposit(uid, amount, ref)
     th = threading.Thread(
         target=poll_deposit,
         args=(uid, chat_id, amount, ref, public_user_label(user_obj)),
