@@ -188,7 +188,7 @@ def set_user_lang(uid, lang):
 BTN_LABELS = {
     "shop":    {"km": "🛒 ទិញ Account", "en": "🛒 Buy Account", "zh": "🛒 购买账号"},
     "wallet":  {"km": "💰 Wallet",       "en": "💰 Wallet",       "zh": "💰 钱包"},
-    "deposit": {"km": "➕ បញ្ចូលលុយ",     "en": "➕ Top Up",       "zh": "➕ 充值"},
+    "deposit": {"km": "➕ ដាក់លុយដោយដៃ",  "en": "➕ Manual top-up", "zh": "➕ 手动充值"},
     "orders":  {"km": "📦 ការកម្មង់",     "en": "📦 My Orders",    "zh": "📦 我的订单"},
     "profile": {"km": "👤 ប្រវត្តិរូប",   "en": "👤 Profile",      "zh": "👤 个人资料"},
     "help":    {"km": "☎️ ជួយខ្ញុំផង",    "en": "☎️ Help",         "zh": "☎️ 帮助"},
@@ -307,7 +307,7 @@ TR = {
     },
     "qty_unit_label": {"km": "{qty} ដុំ", "en": "x{qty}", "zh": "{qty} 个"},
     "buy_from_wallet_btn": {
-        "km": "✅ ទិញពី Wallet — សរុប ${total:.2f}",
+        "km": "✅ បង់ប្រាក់ — សរុប ${total:.2f}",
         "en": "✅ Buy with Wallet — Total ${total:.2f}",
         "zh": "✅ 用钱包购买 — 共 ${total:.2f}",
     },
@@ -1055,10 +1055,11 @@ def _decode_glyph(hex_str):
     return bytes.fromhex(hex_str).decode("utf-8")
 
 
-EMOJI_PAGE_SIZE = 12
+EMOJI_PAGE_SIZE = 10
 
 
 def emoji_setup_kb(page=0):
+    """បញ្ជី glyph — ✅ កំណត់រួច / ⬜ មិនទាន់ + pagination + clear."""
     m = get_emoji_map()
     cats = all_emoji_categories()
     total = len(cats)
@@ -1067,38 +1068,49 @@ def emoji_setup_kb(page=0):
 
     kb = types.InlineKeyboardMarkup(row_width=1)
     for glyph, label in page_cats:
-        mark = "✅" if glyph in m else "⬜"
+        done = glyph in m
+        mark = "✅" if done else "⬜"
+        # short label for button (max readable)
+        short = label if len(label) <= 40 else (label[:37] + "…")
+        style = "success" if done else "primary"
         kb.add(pbtn(
-            f"{mark} {label}",
+            f"{mark} {short}",
             callback_data=f"emoji_pick_{_encode_glyph(glyph)}_{page}",
-            style="primary",
+            style=style,
         ))
 
     nav = []
     if page > 0:
         nav.append(pbtn("⬅️ មុន", callback_data=f"emojilist_{page - 1}", style="primary"))
+    last_page = max(0, (total - 1) // EMOJI_PAGE_SIZE) if total else 0
+    nav.append(pbtn(f"· {page + 1}/{last_page + 1} ·", callback_data="noop", style="primary"))
     if start + EMOJI_PAGE_SIZE < total:
         nav.append(pbtn("បន្ទាប់ ➡️", callback_data=f"emojilist_{page + 1}", style="primary"))
     if nav:
-        kb.add(*nav)
+        kb.row(*nav)
 
-    kb.add(pbtn("🔙 ត្រឡប់ក្រោយ", callback_data="emoji_close", style="primary"))
+    done_n = sum(1 for g, _ in cats if g in m)
+    kb.row(
+        pbtn(f"📊 {done_n}/{total}", callback_data="emoji_status", style="primary"),
+        pbtn("🗑 លុបទាំងអស់", callback_data="emoji_clearall", style="danger"),
+    )
+    kb.row(pbtn("🔙 បិទ Setup", callback_data="emoji_close", style="primary"))
     return kb, total, page
 
 
 def emoji_setup_text(total, page):
-    last_page = (total - 1) // EMOJI_PAGE_SIZE if total else 0
+    m = get_emoji_map()
+    done_n = len(m)
+    last_page = max(0, (total - 1) // EMOJI_PAGE_SIZE) if total else 0
     return (
-        "🎭 <b>Setup Premium Emoji</b>\n\n"
-        "ជ្រើសរើសប្រភេទខាងក្រោម (រួមទាំង icon ផលិតផលនីមួយៗ) រួចផ្ញើ Premium Emoji ពិត "
-        "(ត្រូវការ Telegram Premium)\nដើម្បីភ្ជាប់ icon នោះទៅគ្រប់ប៊ូតុង/សារដែលមាន glyph ធម្មតានេះ "
-        "— ស្តុកមានទើបប៊ូតុងបង្ហាញ icon premium ដូចក្នុងឧទាហរណ៍។\n\n"
-        "✅ អនុវត្តលើ <b>ប៊ូតុងគ្រប់ប្រភេទ</b>៖ ទាំង Inline button (ភ្ជាប់នឹងសារ) និង "
-        "Reply Keyboard (ម៉ឺនុយខាងក្រោមអេក្រង់ដូចជា 🛒 ទិញ Account, 💰 Wallet ។ល។) ដោយស្វ័យប្រវត្តិ — "
-        "កំណត់ម្តងគ្រប់កន្លែងទាំងអស់។\n"
-        "⚠️ ចំណាំ៖ Reply Keyboard ដែលកំពុងបើកនៅលើអេក្រង់ user រួចហើយ នឹងបង្ហាញ icon ថ្មី "
-        "តែពេល bot ផ្ញើម៉ឺនុយនោះម្តងទៀត (ឧ. user ចុច /start ម្តងទៀត)។\n\n"
-        f"(ទំព័រ {page + 1}/{last_page + 1})"
+        "🎭 <b>Setup Premium Emoji</b>\n"
+        f"📊 បានកំណត់: <b>{done_n}</b> / {total} • ទំព័រ {page + 1}/{last_page + 1}\n\n"
+        "1️⃣ ចុចប្រភេទខាងក្រោម (⬜ = មិនទាន់, ✅ = រួច)\n"
+        "2️⃣ ផ្ញើ <b>Premium Emoji</b> ពិត (ត្រូវ Telegram Premium)\n"
+        "3️⃣ Bot ភ្ជាប់ទៅប៊ូតុង/សារគ្រប់កន្លែងស្វ័យប្រវត្តិ\n\n"
+        "💡 ក៏មាន icon ផលិតផលក្នុងបញ្ជី (Netflix, Canva…)\n"
+        "⚠️ Bot owner ត្រូវមាន Premium — ប្រើ /checkemoji ពិនិត្យ\n"
+        "🔄 បន្ទាប់ពីកំណត់: user ចុច /start ឡើងវិញដើម្បី refresh ម៉ឺនុយ"
     )
 
 
@@ -1119,7 +1131,36 @@ def emoji_setup_callback(call):
     chat_id = call.message.chat.id
 
     if data == "emoji_close":
-        bot.edit_message_text("🎭 បិទ Setup Emoji។ ប្រើ /setupemoji ម្តងទៀតបើត្រូវការ។", chat_id, call.message.message_id)
+        bot.edit_message_text("🎭 បិទ Setup Emoji។ ប្រើ /setupemoji ឬ 🎭 Setup Emoji ម្តងទៀតបើត្រូវការ។", chat_id, call.message.message_id)
+
+    elif data == "emoji_status":
+        m = get_emoji_map()
+        cats = all_emoji_categories()
+        lines = [f"✅ {lab}" for g, lab in cats if g in m]
+        miss = [f"⬜ {lab}" for g, lab in cats if g not in m]
+        text = (
+            f"📊 <b>ស្ថានភាព Premium Emoji</b>\n"
+            f"បានកំណត់ {len(m)}/{len(cats)}\n\n"
+        )
+        if lines:
+            text += "<b>រួច:</b>\n" + "\n".join(lines[:25])
+            if len(lines) > 25:
+                text += f"\n… +{len(lines)-25}"
+        if miss:
+            text += "\n\n<b>មិនទាន់ (មួយចំនួន):</b>\n" + "\n".join(miss[:15])
+            if len(miss) > 15:
+                text += f"\n… +{len(miss)-15}"
+        bot.answer_callback_query(call.id)
+        bot.send_message(chat_id, text)
+        return
+
+    elif data == "emoji_clearall":
+        save_emoji_map({})
+        kb, total, page = emoji_setup_kb(0)
+        bot.edit_message_text(
+            "🗑 បានលុប Premium Emoji ទាំងអស់។\n" + emoji_setup_text(total, 0),
+            chat_id, call.message.message_id, reply_markup=kb,
+        )
 
     elif data.startswith("emojilist_"):
         page = int(data[len("emojilist_"):])
@@ -1188,7 +1229,7 @@ def emoji_capture_step(message, glyph, label, page=0):
     reply_btn_texts = [lbl for d in BTN_LABELS.values() for lbl in d.values()] + [
         ADMIN_BTN_STATS, ADMIN_BTN_ADDPRODUCT, ADMIN_BTN_ADDSTOCK, ADMIN_BTN_DELSTOCK,
         ADMIN_BTN_DELPRODUCT, ADMIN_BTN_EDITPRODUCT, ADMIN_BTN_MSGUSER, ADMIN_BTN_BROADCAST,
-        ADMIN_BTN_EMOJI, ADMIN_BTN_SETQR,
+        ADMIN_BTN_EMOJI, ADMIN_BTN_SETQR, ADMIN_BTN_ADDBALANCE,
     ]
     if any(glyph in txt for txt in reply_btn_texts):
         bot.send_message(
@@ -1300,21 +1341,13 @@ PAYMENT_METHOD_KEYS = ("bakong", "aba", "manual")
 
 
 def is_payment_method_enabled(method):
-    """True បើវិធីទូទាត់ (bakong/aba/manual) មិនទាន់ត្រូវបានបិទដោយ admin តាម
-    ADMIN_BTN_PAYTOGGLE ទេ (default = True បើមិនទាន់កំណត់អ្វីសោះ)"""
-    cfg = load_payment_config()
-    return bool(cfg.get(f"{method}_enabled", True))
+    return True
 
 
 def set_payment_method_enabled(method, enabled):
-    with _lock:
-        cfg = load_payment_config()
-        cfg[f"{method}_enabled"] = bool(enabled)
-        save_payment_config(cfg)
-        return cfg
+    return
 
 
-NOTIFY_CONFIG_FILE = os.path.join(DATA_DIR, "notify_config.json")
 
 
 def load_notify_config():
@@ -2142,44 +2175,102 @@ def main_menu_kb(uid):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         pbtn(btn_label("shop", get_user_lang(uid)), callback_data="menu_shop", style="success"),
-        pbtn(btn_label("wallet", get_user_lang(uid)), callback_data="menu_wallet", style="primary"),
+        pbtn(btn_label("orders", get_user_lang(uid)), callback_data="menu_orders", style="primary"),
     )
     kb.add(
-        pbtn(btn_label("orders", get_user_lang(uid)), callback_data="menu_orders", style="primary"),
         pbtn("☎️ Admin", url="tg://user?id=%d" % ADMIN_ID, style="primary"),
+        pbtn(btn_label("lang", get_user_lang(uid)), callback_data="menu_lang", style="primary"),
     )
-    kb.add(pbtn(btn_label("lang", get_user_lang(uid)), callback_data="menu_lang", style="primary"))
     return kb
 
 
-def products_kb(uid):
-    lang = get_user_lang(uid)
+PRODUCTS_PER_PAGE = 18
+
+
+def _product_short_name(name, max_len=11):
+    n = (name or "Item").strip()
+    first = n.split()[0] if n else "Item"
+    if len(first) <= max_len:
+        return first
+    return first[: max_len - 1] + "…"
+
+
+def products_kb(uid, page=0):
+    """Grid 3 columns + pagination — ងាយរក product."""
     products = load_products()
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    # តម្រៀប product ដែលមានស្តុក (ឬ email type ដែលចាត់ទុកមានស្តុកជានិច្ច) ឲ្យនៅខាងលើ
-    # ហើយ product ដែលអស់ស្តុកទុកនៅខាងក្រោម (រក្សាលំដាប់ដើមក្នុងក្រុមនីមួយៗ)
+    kb = types.InlineKeyboardMarkup(row_width=3)
+
     def _in_stock(item):
         k, prod = item
         if prod.get("delivery_type") == "email":
             return True
         return stock_count(k) > 0
-    ordered_products = sorted(products.items(), key=lambda item: 0 if _in_stock(item) else 1)
-    for key, p in ordered_products:
-        icon = resolve_icon(p.get("icon", "📦"))
-        # product ប្រភេទ "email" គ្មាន stock file ទេ (admin ដាក់ដោយដៃម្តងម្នាក់ៗ) —
-        # ចាត់ទុកជាមានស្តុកជានិច្ច មិនត្រូវ check stock_count ទេ
-        is_email_type = p.get("delivery_type") == "email"
-        left = None if is_email_type else stock_count(key)
-        if is_email_type or left > 0:
-            label = f"{icon} {p['name'].upper()} - ${p['price']:.2f}"
+
+    # group: one button per group (or single product)
+    seen_groups = set()
+    ordered = []
+    for key, prod in sorted(products.items(), key=lambda it: (0 if _in_stock(it) else 1, (it[1].get("name") or "").lower())):
+        g = (prod.get("group") or "").strip()
+        if g:
+            if g in seen_groups:
+                continue
+            seen_groups.add(g)
+            # use first product of group as key for detail
+            ordered.append((key, prod, True))
         else:
-            label = f"× {icon} {p['name'].upper()} - {t(uid, 'out_of_stock_label')}"
-        # ចុចមើលបានជានិច្ច (មិនថាអស់ស្តុក ឬ balance អ្វីទេ) — ព័ត៌មាន photo/price/description
-        # ត្រូវឲ្យ user ឃើញបានគ្រប់ពេល, ការ check ស្តុក/balance ធ្វើតែពេលចុច "✅ ទិញឥឡូវ" ប៉ុណ្ណោះ
-        btn = pbtn(label, callback_data=f"buyopt_{key}", style="success" if (is_email_type or left > 0) else "danger")
-        kb.add(btn)
-    kb.add(pbtn(t(uid, "back_btn"), callback_data="back_main", style="primary"))
+            ordered.append((key, prod, False))
+
+    total = len(ordered)
+    pages = max(1, (total + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE)
+    page = max(0, min(int(page or 0), pages - 1))
+    chunk = ordered[page * PRODUCTS_PER_PAGE : (page + 1) * PRODUCTS_PER_PAGE]
+
+    row = []
+    for key, prod, is_group in chunk:
+        icon = resolve_icon(prod.get("icon", "📦"))
+        title = (prod.get("group_title") or prod.get("brand") or prod.get("name") or key)
+        short = _product_short_name(title)
+        if is_group:
+            # any sibling in stock?
+            g = (prod.get("group") or "").strip()
+            any_ok = any(
+                (sp.get("delivery_type") == "email") or stock_count(sk) > 0
+                for sk, sp in products.items()
+                if (sp.get("group") or "").strip() == g
+            )
+            in_stock = any_ok
+        else:
+            in_stock = (prod.get("delivery_type") == "email") or stock_count(key) > 0
+        label = f"{icon} {short}" if in_stock else f"× {short}"
+        style = "success" if in_stock else "danger"
+        row.append(pbtn(label, callback_data=f"buyopt_{key}", style=style))
+        if len(row) == 3:
+            kb.row(*row)
+            row = []
+    if row:
+        kb.row(*row)
+
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(pbtn("⬅️", callback_data=f"shoppage_{page - 1}", style="primary"))
+        nav.append(pbtn(f"{page + 1}/{pages}", callback_data="noop", style="primary"))
+        if page < pages - 1:
+            nav.append(pbtn("➡️", callback_data=f"shoppage_{page + 1}", style="primary"))
+        kb.row(*nav)
+
+    kb.row(pbtn(t(uid, "back_btn"), callback_data="back_main", style="primary"))
     return kb
+
+
+def shop_list_text(uid, page=0):
+    products = load_products()
+    n = len(products)
+    return (
+        f"🛍️ <b>PRODUCT LIST</b>\n"
+        f"{STORE_NAME}\n\n"
+        f"ជ្រើសរើស product ខាងក្រោម • {n} មុខ"
+    )
 
 
 def qty_pick_kb(uid, key, qty, max_qty, unit_price):
@@ -2204,8 +2295,28 @@ def _safe_edit_or_send(call, text, reply_markup):
         bot.send_message(chat_id, text, reply_markup=reply_markup)
 
 
+def _product_plan_label(p, key):
+    if p.get("plan"):
+        return str(p["plan"])
+    name = (p.get("name") or key or "").strip()
+    parts = name.replace("-", " ").split()
+    if len(parts) >= 2:
+        return parts[-1][:16]
+    return _product_short_name(name, 14)
+
+
+def _group_products(products, product_key):
+    p = products.get(product_key) or {}
+    group = (p.get("group") or "").strip()
+    if group:
+        items = [(k, v) for k, v in products.items() if (v.get("group") or "").strip() == group]
+        if items:
+            return sorted(items, key=lambda it: (float(it[1].get("price") or 0), it[0]))
+    return [(product_key, p)] if p else []
+
+
 def show_product_detail(call, product_key):
-    """បង្ហាញព័ត៌មានលម្អិត product (រូបភាព + description) មុននឹង user ចុចទិញ"""
+    """Detail ស្អាត: ឈ្មោះ + ស្តុក + លក់ + plan buttons."""
     uid = call.from_user.id
     chat_id = call.message.chat.id
     products = load_products()
@@ -2213,44 +2324,66 @@ def show_product_detail(call, product_key):
     if not p:
         bot.answer_callback_query(call.id, t(uid, "product_invalid"), show_alert=True)
         return
-    icon = resolve_icon(p.get("icon", "📦"))
-    is_email_type = p.get("delivery_type") == "email"
-    description = (p.get("description") or "").strip()
-    out_of_stock = (not is_email_type) and stock_count(product_key) <= 0
-    sold = p.get("sold", 0)
 
-    lines = [f"{icon} <b>{p['name']}</b>", ""]
-    lines.append(t(uid, "product_price_line", price=p["price"]))
-    if is_email_type:
-        lines.append(t(uid, "product_delivery_email"))
-    elif out_of_stock:
-        lines.append(t(uid, "product_stock_out_line"))
+    icon = resolve_icon(p.get("icon", "📦"))
+    description = (p.get("description") or "").strip()
+    group_items = _group_products(products, product_key)
+
+    total_sold = sum(int(gp.get("sold") or 0) for _, gp in group_items)
+    if any(gp.get("delivery_type") == "email" for _, gp in group_items):
+        stock_line = "📧 Delivery: Email"
+        left = None
     else:
-        lines.append(t(uid, "product_stock_line", left=stock_count(product_key)))
-    lines.append(t(uid, "product_sold_line", sold=sold))
+        if len(group_items) == 1:
+            left = stock_count(product_key)
+        else:
+            left = sum(max(0, stock_count(k)) for k, _ in group_items)
+        stock_line = f"📦 ស្តុកមាន: <b>{left}</b>"
+
+    title = (p.get("group_title") or p.get("brand") or p.get("name") or product_key).strip()
+    lines = [
+        f"{icon} <b>{html.escape(title.upper())}</b>",
+        "",
+        stock_line,
+        f"📊 លក់រួច: <b>{total_sold}</b>",
+    ]
     if description:
         lines.append("")
-        lines.append(t(uid, "product_description_label"))
-        lines.append(f"<blockquote>{html.escape(description)}</blockquote>")
+        lines.append("▼ ព័ត៌មានបន្ថែម")
+        desc = description if len(description) <= 350 else description[:347] + "..."
+        lines.append(html.escape(desc))
     caption = "\n".join(lines)
 
     kb = types.InlineKeyboardMarkup(row_width=1)
-    if out_of_stock:
-        kb.add(pbtn(t(uid, "out_of_stock_btn"), callback_data=f"nostock_{product_key}", style="danger"))
-    else:
-        kb.add(pbtn(t(uid, "buy_now_btn"), callback_data=f"buydetailok_{product_key}", style="success"))
-    kb.add(pbtn(t(uid, "back_btn"), callback_data="menu_shop", style="primary"))
+    for k, gp in group_items:
+        plan = _product_plan_label(gp, k)
+        email_t = gp.get("delivery_type") == "email"
+        oos = (not email_t) and stock_count(k) <= 0
+        price = float(gp.get("price") or 0)
+        if oos:
+            kb.add(pbtn(f"{plan} • អស់ស្តុក", callback_data=f"nostock_{k}", style="danger"))
+        else:
+            kb.add(pbtn(f"{plan} • ${price:.2f}", callback_data=f"buydetailok_{k}", style="primary"))
+    kb.add(pbtn("➡️ បក់ទៅហាង", callback_data="menu_shop", style="primary"))
 
     photo_file_id = p.get("photo_file_id")
-    if photo_file_id:
+    if not photo_file_id:
+        for _, gp in group_items:
+            if gp.get("photo_file_id"):
+                photo_file_id = gp["photo_file_id"]
+                break
+
+    try:
         bot.answer_callback_query(call.id)
+    except Exception:
+        pass
+    if photo_file_id:
         try:
             bot.send_photo(chat_id, photo_file_id, caption=caption, reply_markup=kb)
+            return
         except Exception as e:
-            print(f"[show_product_detail] send_photo failed: {e}", flush=True)
-            bot.send_message(chat_id, caption, reply_markup=kb)
-    else:
-        _safe_edit_or_send(call, caption, kb)
+            print(f"[show_product_detail] {e}", flush=True)
+    _safe_edit_or_send(call, caption, kb)
 
 
 def show_qty_picker(call, product_key, qty):
@@ -2312,11 +2445,11 @@ ADMIN_BTN_DELPRODUCT = "🗑 លុប Product"
 ADMIN_BTN_EDITPRODUCT = "✏️ កែ Product"
 ADMIN_BTN_MSGUSER = "📨 ផ្ញើសារទៅ User"
 ADMIN_BTN_FINDUSER = "🔍 មើល Data User"
+ADMIN_BTN_ADDBALANCE = "💵 បញ្ចូលលុយ User"
 ADMIN_BTN_BROADCAST = "📢 ផ្ញើសារទៅគ្រប់គ្នា"
 ADMIN_BTN_EMOJI = "🎭 Setup Emoji"
 ADMIN_BTN_SETQR = "🖼 កំណត់ QR ទូទាត់ដោយដៃ"
 ADMIN_BTN_SETNOTIFY = "🔔 កំណត់ Channel ជូនដំណឹង"
-ADMIN_BTN_PAYTOGGLE = "🔀 បិទ/បើក វិធីទូទាត់"
 
 
 def reply_kb_for(uid):
@@ -2326,7 +2459,7 @@ def reply_kb_for(uid):
     lang = get_user_lang(uid)
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add(kbtn(btn_label("shop", lang), style="success"))
-    kb.add(kbtn(btn_label("wallet", lang), style="primary"), kbtn(btn_label("deposit", lang), style="success"))
+    kb.add(kbtn(btn_label("deposit", lang), style="success"), kbtn(btn_label("wallet", lang), style="primary"))
     kb.add(kbtn(btn_label("orders", lang), style="primary"), kbtn(btn_label("profile", lang), style="primary"))
     kb.add(kbtn(btn_label("help", lang), style="primary"), kbtn(btn_label("lang", lang), style="primary"))
     if is_admin(uid):
@@ -2334,9 +2467,9 @@ def reply_kb_for(uid):
         kb.add(kbtn(ADMIN_BTN_ADDSTOCK, style="success"), kbtn(ADMIN_BTN_DELSTOCK, style="danger"))
         kb.add(kbtn(ADMIN_BTN_DELPRODUCT, style="danger"), kbtn(ADMIN_BTN_EDITPRODUCT, style="primary"))
         kb.add(kbtn(ADMIN_BTN_MSGUSER, style="primary"), kbtn(ADMIN_BTN_BROADCAST, style="primary"))
-        kb.add(kbtn(ADMIN_BTN_FINDUSER, style="primary"))
+        kb.add(kbtn(ADMIN_BTN_FINDUSER, style="primary"), kbtn(ADMIN_BTN_ADDBALANCE, style="success"))
         kb.add(kbtn(ADMIN_BTN_EMOJI, style="primary"), kbtn(ADMIN_BTN_SETQR, style="primary"))
-        kb.add(kbtn(ADMIN_BTN_SETNOTIFY, style="primary"), kbtn(ADMIN_BTN_PAYTOGGLE, style="primary"))
+        kb.add(kbtn(ADMIN_BTN_SETNOTIFY, style="primary"))
     return kb
 
 
@@ -2426,20 +2559,33 @@ def cmd_orders(message):
 @bot.message_handler(func=lambda m: is_btn(m.text, "shop"))
 def reply_shop(message):
     uid = message.from_user.id
-    bot.send_message(message.chat.id, t(uid, "shop_choose"), reply_markup=products_kb(uid))
+    bot.send_message(message.chat.id, shop_list_text(uid), reply_markup=products_kb(uid, 0))
 
 
 @bot.message_handler(func=lambda m: is_btn(m.text, "wallet"))
 def reply_wallet(message):
     uid = message.from_user.id
     u = get_user(uid)
-    bot.send_message(message.chat.id, t(uid, "wallet_current", balance=u["balance"], orders=u["orders"]))
+    bot.send_message(
+        message.chat.id,
+        t(uid, "wallet_current", balance=u["balance"], orders=u.get("orders", 0))
+        + "\n\n💡 ដាក់លុយ: ចុច <b>➕ ដាក់លុយដោយដៃ</b>",
+    )
+
 
 
 @bot.message_handler(func=lambda m: is_btn(m.text, "deposit"))
 def reply_deposit(message):
+    """ដាក់លុយដោយដៃ — គ្មាន QR។ User ជ្រើស/វាយចំនួន → Admin បញ្ជាក់ → បញ្ចូល Wallet."""
     uid = message.from_user.id
-    bot.send_message(message.chat.id, t(uid, "deposit_choose_amount"), reply_markup=deposit_amount_kb(uid))
+    bot.send_message(
+        message.chat.id,
+        "➕ <b>ដាក់លុយដោយដៃ</b>\n"
+        "គ្មាន QR — ផ្ញើប្រាក់តាមរបៀបដែល Admin ប្រាប់ (ធនាគារ/ផ្ទាល់) រួចស្នើចំនួនខាងក្រោម។\n\n"
+        + t(uid, "deposit_choose_amount"),
+        reply_markup=deposit_amount_kb(uid),
+    )
+
 
 
 @bot.message_handler(func=lambda m: is_btn(m.text, "orders"))
@@ -2491,11 +2637,17 @@ def reply_admin_addproduct(message):
 def admin_product_pick_kb(prefix, empty_stock_only=False):
     products = load_products()
     kb = types.InlineKeyboardMarkup(row_width=1)
-    for key, p in products.items():
+    # sort by name
+    for key, p in sorted(products.items(), key=lambda it: (it[1].get("name") or "").lower()):
+        if empty_stock_only and p.get("delivery_type") != "email" and stock_count(key) > 0:
+            continue
         icon = resolve_icon(p.get("icon", "📦"))
-        left = stock_count(key)
+        left = "∞" if p.get("delivery_type") == "email" else str(stock_count(key))
         sold = p.get("sold", 0)
-        label = f"{icon} {p['name']} ({left} នៅសល់ / លក់ {sold})"
+        price = float(p.get("price") or 0)
+        g = p.get("group") or ""
+        gtag = f" [{g}]" if g else ""
+        label = f"{icon} {p.get('name', key)}{gtag} • ${price:.2f} • ស្តុក {left} • លក់ {sold}"
         kb.add(pbtn(label, callback_data=f"{prefix}_{key}", style="primary"))
     if not products:
         kb.add(pbtn("(មិនទាន់មាន product ណាមួយ)", callback_data="noop", style="primary"))
@@ -2890,10 +3042,32 @@ def callback_router(call):
     chat_id = call.message.chat.id
 
     if data == "menu_shop":
-        bot.edit_message_text(
-            t(uid, "shop_choose"),
-            chat_id, call.message.message_id, reply_markup=products_kb(uid),
-        )
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+        try:
+            bot.edit_message_text(
+                shop_list_text(uid), chat_id, call.message.message_id, reply_markup=products_kb(uid, 0),
+            )
+        except Exception:
+            bot.send_message(chat_id, shop_list_text(uid), reply_markup=products_kb(uid, 0))
+
+    elif data.startswith("shoppage_"):
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+        try:
+            page = int(data.split("_", 1)[1])
+        except Exception:
+            page = 0
+        try:
+            bot.edit_message_text(
+                shop_list_text(uid), chat_id, call.message.message_id, reply_markup=products_kb(uid, page),
+            )
+        except Exception:
+            bot.send_message(chat_id, shop_list_text(uid), reply_markup=products_kb(uid, page))
 
     elif data == "menu_wallet":
         u = get_user(uid)
@@ -2944,7 +3118,7 @@ def callback_router(call):
         if product and product.get("delivery_type") == "email":
             start_buy_email_flow(call, product_key)
         else:
-            show_qty_picker(call, product_key, 1)
+            start_product_payment(call, product_key, 1)
 
     elif data.startswith("qtymin_"):
         key, qty_s = data[len("qtymin_"):].rsplit("_", 1)
@@ -2956,7 +3130,31 @@ def callback_router(call):
 
     elif data.startswith("qtyok_"):
         key, qty_s = data[len("qtyok_"):].rsplit("_", 1)
-        handle_buy_wallet(call, key, int(qty_s))
+        start_product_payment(call, key, int(qty_s))
+
+    elif data.startswith("buypay_bk_"):
+        rest = data[len("buypay_bk_"):]
+        product_key, _, qty_s = rest.rpartition("_")
+        qty = int(qty_s) if qty_s.isdigit() else 1
+        pr = load_products().get(product_key) or {}
+        amount = round(float(pr.get("price") or 0) * qty, 2)
+        _start_buy_pay_method(uid, chat_id, product_key, qty, amount, pr.get("name", product_key), "bakong", call.from_user)
+
+    elif data.startswith("buypay_aba_"):
+        rest = data[len("buypay_aba_"):]
+        product_key, _, qty_s = rest.rpartition("_")
+        qty = int(qty_s) if qty_s.isdigit() else 1
+        pr = load_products().get(product_key) or {}
+        amount = round(float(pr.get("price") or 0) * qty, 2)
+        _start_buy_pay_method(uid, chat_id, product_key, qty, amount, pr.get("name", product_key), "aba", call.from_user)
+
+    elif data.startswith("buypay_man_"):
+        rest = data[len("buypay_man_"):]
+        product_key, _, qty_s = rest.rpartition("_")
+        qty = int(qty_s) if qty_s.isdigit() else 1
+        pr = load_products().get(product_key) or {}
+        amount = round(float(pr.get("price") or 0) * qty, 2)
+        _start_buy_pay_method(uid, chat_id, product_key, qty, amount, pr.get("name", product_key), "manual", call.from_user)
 
     elif data.startswith("nostock_"):
         product_key = data.split("_", 1)[1]
@@ -3014,6 +3212,48 @@ def callback_router(call):
         order_id = data[len("emailorreject_"):]
         _handle_email_order_reject(call, order_id)
 
+    
+    elif data.startswith("adballist_"):
+        if not is_admin(uid):
+            return
+        page = int(data[len("adballist_"):])
+        kb, total, page = addbalance_user_list_kb(page)
+        bot.edit_message_text(
+            addbalance_list_text(total, page), chat_id, call.message.message_id, reply_markup=kb,
+        )
+
+    elif data == "adbal_typeid":
+        if not is_admin(uid):
+            return
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(
+            chat_id,
+            "✏️ វាយ <b>User ID</b> (លេខ Telegram) ដែលចង់បញ្ចូលលុយ:\nឬ <code>-</code> បោះបង់:",
+        )
+        bot.register_next_step_handler(msg, admin_addbalance_typeid_step)
+
+    elif data.startswith("adbal_"):
+        if not is_admin(uid):
+            return
+        # adbal_{uid}_{page}
+        rest = data[len("adbal_"):]
+        target_s, _, page_s = rest.rpartition("_")
+        try:
+            target_uid = int(target_s)
+        except ValueError:
+            bot.answer_callback_query(call.id, "❌ User ID មិនត្រឹមត្រូវ", show_alert=True)
+            return
+        bot.answer_callback_query(call.id)
+        label = stored_user_label(target_uid)
+        u = get_user(target_uid)
+        msg = bot.send_message(
+            chat_id,
+            f"💵 User: {label} (<code>{target_uid}</code>)\n"
+            f"💰 សមតុល្យ: <b>${float(u.get('balance') or 0):.2f}</b>\n\n"
+            f"វាយចំនួន USD (ឧ. 10 ឬ -5 ដើម្បីដក)\nឬ <code>-</code> បោះបង់:",
+        )
+        bot.register_next_step_handler(msg, admin_addbalance_amount_step, target_uid)
+
     elif data.startswith("fulist_"):
         if not is_admin(uid):
             return
@@ -3051,11 +3291,28 @@ def callback_router(call):
         if key not in products:
             bot.answer_callback_query(call.id, "❌ Product មិនត្រឹមត្រូវ", show_alert=True)
             return
+        p = products[key]
+        if p.get("delivery_type") == "email":
+            bot.answer_callback_query(call.id, "❌ Product ប្រភេទ Email មិនប្រើ stock file", show_alert=True)
+            return
+        left = stock_count(key)
+        icon = resolve_icon(p.get("icon", "📦"))
+        bot.answer_callback_query(call.id)
         bot.edit_message_text(
-            f"📥 សូមផ្ញើ account list សំរាប់ '{products[key]['name']}'\n(មួយបន្ទាត់ = account មួយ)",
+            f"📥 <b>បញ្ចូល Stock</b>\n"
+            f"{icon} <b>{p.get('name', key)}</b>\n"
+            f"📦 ស្តុកបច្ចុប្បន្ន: <b>{left}</b>\n"
+            f"💵 ${float(p.get('price') or 0):.2f}\n\n"
+            f"សូមផ្ញើតាមមួយក្នុង៖\n"
+            f"• <b>អត្ថបទ</b> — មួយ account ក្នុងមួយបន្ទាត់\n"
+            f"• <b>File .txt</b> — document\n\n"
+            f"ឧទាហរណ៍:\n"
+            f"<code>user:pass\nemail@gmail.com|pass123</code>\n\n"
+            f"វាយ <code>-</code> ដើម្បីបោះបង់",
             chat_id, call.message.message_id,
         )
         bot.register_next_step_handler(call.message, process_addstock, key)
+
 
     elif data.startswith("admdelstock_"):
         if not is_admin(uid):
@@ -3287,323 +3544,6 @@ def callback_router(call):
             reply_markup=admin_delete_confirm_kb(key),
         )
 
-    elif data.startswith("paytoggle_"):
-        if not is_admin(uid):
-            return
-        method = data[len("paytoggle_"):]
-        if method not in PAYMENT_METHOD_KEYS:
-            bot.answer_callback_query(call.id, "❌ វិធីមិនត្រឹមត្រូវ", show_alert=True)
-            return
-        new_state = not is_payment_method_enabled(method)
-        set_payment_method_enabled(method, new_state)
-        try:
-            bot.edit_message_text(
-                _paytoggle_text(), chat_id, call.message.message_id, reply_markup=_paytoggle_kb(),
-            )
-        except Exception:
-            pass
-        state_label = "✅ បើក" if new_state else "❌ បិទ"
-        bot.answer_callback_query(call.id, f"{_PAYTOGGLE_LABELS[method]}: {state_label}")
-        return
-
-    bot.answer_callback_query(call.id)
-
-
-def handle_buy_wallet(call, product_key, qty=1):
-    uid = call.from_user.id
-    chat_id = call.message.chat.id
-    products = load_products()
-    if product_key not in products:
-        bot.answer_callback_query(call.id, t(uid, "product_invalid"), show_alert=True)
-        return
-
-    product = products[product_key]
-    unit_price = product["price"]
-    qty = max(1, qty)
-    total_price = round(unit_price * qty, 2)
-
-    if stock_count(product_key) < qty:
-        bot.answer_callback_query(call.id, t(uid, "insufficient_stock_alert", left=stock_count(product_key), qty=qty), show_alert=True)
-        return
-
-    items = pop_stock_items(product_key, qty)
-    if len(items) < qty:
-        push_stock_items(product_key, items)
-        bot.answer_callback_query(call.id, t(uid, "stock_sold_out_retry_alert"), show_alert=True)
-        return
-
-    ok, cur_balance = try_deduct_balance(uid, total_price)
-    if not ok:
-        push_stock_items(product_key, items)  # ដាក់ stock ត្រឡប់វិញ ព្រោះកាត់លុយមិនចេញ
-        bot.answer_callback_query(
-            call.id,
-            t(uid, "balance_insufficient_alert", balance=cur_balance, price=total_price),
-            show_alert=True,
-        )
-        return
-
-    orders = load_orders()
-    orders.append({
-        "uid": uid,
-        "product": product["name"],
-        "price": total_price,
-        "qty": qty,
-        "time": time.strftime("%Y-%m-%d %H:%M"),
-    })
-    save_orders(orders)
-
-    products[product_key]["sold"] = products[product_key].get("sold", 0) + qty
-    save_products(products)
-
-    users = load_users()
-    users[str(uid)]["orders"] = users[str(uid)].get("orders", 0) + qty
-    save_users(users)
-
-    accounts_text = "\n".join(f"{i+1}. <code>{html.escape(it)}</code>" for i, it in enumerate(items))
-    bot.send_message(
-        chat_id,
-        t(uid, "purchase_success", name=product["name"], qty=qty, total=total_price, accounts=accounts_text),
-    )
-
-    if ADMIN_ID:
-        try:
-            bot.send_message(
-                ADMIN_ID,
-                f"🔔 លក់ថ្មី: {product['name']} × {qty} (${total_price:.2f}) ដល់ user {uid}\n"
-                f"ស្តុកនៅសល់: {stock_count(product_key)}",
-            )
-            if stock_count(product_key) <= 2:
-                bot.send_message(ADMIN_ID, f"⚠️ ស្តុក {product['name']} ជិតអស់! ({stock_count(product_key)} នៅសល់)")
-        except Exception:
-            pass
-
-    notify_public(
-        f"🛍️ <b>ការកម្មង់ថ្មី!</b>\n"
-        f"{product.get('icon', '📦')} {product['name']} × {qty}\n"
-        f"💵 ${total_price:.2f}\n"
-        f"👤 {public_user_label(call.from_user)}"
-    )
-
-    left_after = stock_count(product_key)
-    if 0 < left_after <= LOW_STOCK_THRESHOLD:
-        products2 = load_products()
-        if product_key in products2 and not products2[product_key].get("low_stock_alerted"):
-            products2[product_key]["low_stock_alerted"] = True
-            save_products(products2)
-            try:
-                broadcast_low_stock(product_key, left_after)
-            except Exception as e:
-                print(f"[broadcast_low_stock] failed: {e}", flush=True)
-
-
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def start_buy_email_flow(call, product_key):
-    """ចាប់ផ្ដើមការទិញ product ប្រភេទ 'email' — សួរ email របស់ user ជាមុនសិន
-    មុននឹងកាត់លុយ (kiểm balance មុន ដើម្បីកុំឲ្យសួរ email ចោលឥតប្រយោជន៍)"""
-    uid = call.from_user.id
-    chat_id = call.message.chat.id
-    products = load_products()
-    product = products.get(product_key)
-    if not product:
-        bot.answer_callback_query(call.id, t(uid, "product_invalid"), show_alert=True)
-        return
-    price = product["price"]
-    user = get_user(uid)
-    if user["balance"] < price:
-        bot.answer_callback_query(
-            call.id,
-            t(uid, "balance_insufficient_alert", balance=user["balance"], price=price),
-            show_alert=True,
-        )
-        return
-    bot.answer_callback_query(call.id)
-    msg = bot.send_message(
-        chat_id,
-        t(uid, "email_prompt", icon=resolve_icon(product.get("icon")), name=product["name"], price=price),
-    )
-    bot.register_next_step_handler(msg, buy_email_step_address, product_key)
-
-
-def buy_email_step_address(message, product_key):
-    if not message.from_user:
-        return
-    uid = message.from_user.id
-    chat_id = message.chat.id
-    email = (message.text or "").strip()
-    if not _EMAIL_RE.match(email):
-        msg = bot.send_message(chat_id, t(uid, "email_invalid"))
-        bot.register_next_step_handler(msg, buy_email_step_address, product_key)
-        return
-
-    products = load_products()
-    product = products.get(product_key)
-    if not product:
-        bot.send_message(chat_id, t(uid, "product_gone"))
-        return
-    price = product["price"]
-    ok, cur_balance = try_deduct_balance(uid, price)
-    if not ok:
-        bot.send_message(chat_id, t(uid, "balance_insufficient_alert", balance=cur_balance, price=price))
-        return
-
-    order_id = f"EM{uid}{int(time.time())}"[:60]
-    create_pending_email_order(order_id, uid, product_key, product["name"], price, email)
-
-    bot.send_message(
-        chat_id,
-        t(uid, "email_received", name=product["name"], price=price, email=html.escape(email)),
-    )
-
-    admin_kb = types.InlineKeyboardMarkup(row_width=1)
-    admin_kb.add(
-        pbtn("✅ រួចរាល់ (Done)", callback_data=f"emailordone_{order_id}", style="success"),
-        pbtn("❌ បដិសេធ (Refund)", callback_data=f"emailorreject_{order_id}", style="danger"),
-    )
-    if ADMIN_ID:
-        try:
-            bot.send_message(
-                ADMIN_ID,
-                f"📧 <b>Order Email ថ្មី — ត្រូវការដាក់ Premium ដោយដៃ</b>\n\n"
-                f"🛍️ Product: <b>{product['name']}</b>\n"
-                f"💵 តម្លៃ: ${price:.2f}\n"
-                f"👤 User: {public_user_label(message.from_user)} (<code>{uid}</code>)\n"
-                f"📧 Email: <code>{html.escape(email)}</code>\n\n"
-                f"👉 សូមដាក់ Premium/Invite លើ email នេះឲ្យរួច រួចចុច '✅ រួចរាល់' ដើម្បីជូនដំណឹង user។",
-                reply_markup=admin_kb,
-            )
-        except Exception as e:
-            print(f"[buy_email_step_address] failed to notify admin: {e}", flush=True)
-
-
-def _handle_email_order_done(call, order_id):
-    rec = get_pending_email_order(order_id)
-    if not rec:
-        bot.answer_callback_query(call.id, "❌ រកមិនឃើញ order នេះទេ", show_alert=True)
-        return
-    if rec.get("status") != "pending":
-        bot.answer_callback_query(call.id, f"ℹ️ Order នេះត្រូវបានដោះស្រាយរួចហើយ ({rec.get('status')})", show_alert=True)
-        return
-    uid = rec["uid"]
-    update_pending_email_order(order_id, status="done")
-
-    orders = load_orders()
-    orders.append({
-        "uid": uid,
-        "product": rec["product"],
-        "price": rec["price"],
-        "qty": 1,
-        "time": time.strftime("%Y-%m-%d %H:%M"),
-        "delivery_type": "email",
-        "email": rec["email"],
-    })
-    save_orders(orders)
-
-    products = load_products()
-    if rec["product_key"] in products:
-        products[rec["product_key"]]["sold"] = products[rec["product_key"]].get("sold", 0) + 1
-        save_products(products)
-
-    users = load_users()
-    if str(uid) in users:
-        users[str(uid)]["orders"] = users[str(uid)].get("orders", 0) + 1
-        save_users(users)
-
-    try:
-        bot.send_message(uid, t(uid, "email_order_done", name=rec["product"], email=html.escape(rec["email"]), store=STORE_NAME))
-    except Exception:
-        pass
-
-    notify_public(
-        f"📧 <b>Order Email ជោគជ័យ!</b>\n{rec['product']} — ${rec['price']:.2f}\n👤 {stored_user_label(uid)} (<code>{uid}</code>)"
-    )
-    bot.answer_callback_query(call.id, "✅ បានបញ្ជាក់ ហើយជូនដំណឹងទៅ user រួចរាល់")
-    try:
-        base_text = call.message.caption or call.message.text or ""
-        new_text = base_text + "\n\n✅ <b>រួចរាល់ហើយ</b>"
-        if call.message.content_type == "text":
-            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
-        else:
-            bot.edit_message_caption(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
-    except Exception:
-        pass
-
-
-def _handle_email_order_reject(call, order_id):
-    rec = get_pending_email_order(order_id)
-    if not rec:
-        bot.answer_callback_query(call.id, "❌ រកមិនឃើញ order នេះទេ", show_alert=True)
-        return
-    if rec.get("status") != "pending":
-        bot.answer_callback_query(call.id, f"ℹ️ Order នេះត្រូវបានដោះស្រាយរួចហើយ ({rec.get('status')})", show_alert=True)
-        return
-    uid = rec["uid"]
-    price = rec["price"]
-    update_pending_email_order(order_id, status="rejected")
-    new_balance = update_balance(uid, price)  # សងលុយត្រឡប់ចូល wallet វិញ
-    try:
-        bot.send_message(
-            uid,
-            t(uid, "email_order_rejected", name=rec["product"], email=html.escape(rec["email"]), price=price, balance=new_balance),
-        )
-    except Exception:
-        pass
-    bot.answer_callback_query(call.id, "❌ បានបដិសេធ ហើយសងលុយត្រឡប់ជូន user រួចរាល់")
-    try:
-        base_text = call.message.caption or call.message.text or ""
-        new_text = base_text + "\n\n❌ <b>បានបដិសេធ + សងលុយ</b>"
-        if call.message.content_type == "text":
-            bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
-        else:
-            bot.edit_message_caption(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id)
-    except Exception:
-        pass
-
-
-def handle_deposit(uid, chat_id, amount, user_obj, call=None):
-    """• បើមានវិធីទូទាត់ស្វ័យប្រវត្តិច្រើនជាង ១ (Bakong KHQR + ABA PayWay) → ឲ្យ user ជ្រើសរើសមុន
-    • បើមានតែមួយ → ប្រើវិធីនោះផ្ទាល់ (auto-detect)
-    • បើគ្មានវិធីណាមួយកំណត់ (ឬ admin បិទទាំងអស់តាម ADMIN_BTN_PAYTOGGLE) → ប្រើ QR ផ្ទាល់ខ្លួនដែល
-      admin កំណត់ដោយដៃ + ឲ្យ user ផ្ញើវិក័យប័ត្រមកផ្ទៀងផ្ទាត់ដោយដៃ (លុះត្រាតែ admin បិទ Manual QR ផងដែរ)"""
-    bakong_ok = has_auto_bakong()
-    aba_ok = has_aba_payway()
-    if bakong_ok and aba_ok:
-        _show_payment_method_picker(uid, chat_id, amount, call=call)
-        return
-    if aba_ok:
-        _handle_deposit_aba(uid, chat_id, amount, user_obj, call=call)
-        return
-    if bakong_ok:
-        _handle_deposit_auto(uid, chat_id, amount, user_obj, call=call)
-        return
-    if not is_payment_method_enabled("manual"):
-        text = t(uid, "deposit_no_method_available")
-        if call:
-            bot.answer_callback_query(call.id, text, show_alert=True)
-        else:
-            bot.send_message(chat_id, text)
-        if ADMIN_ID:
-            try:
-                bot.send_message(
-                    ADMIN_ID,
-                    f"🚨 <b>User ព្យាយាមដាក់លុយ ${amount:.2f} តែវិធីទូទាត់ទាំងអស់ត្រូវបានបិទ!</b>\n"
-                    f"👤 {public_user_label(user_obj)} (<code>{uid}</code>)\n\n"
-                    f"សូមចុច {ADMIN_BTN_PAYTOGGLE} ដើម្បីបើកវិធីទូទាត់ណាមួយឡើងវិញ។",
-                )
-            except Exception:
-                pass
-        return
-    handle_deposit_manual(uid, chat_id, amount, user_obj, call=call)
-
-
-def _show_payment_method_picker(uid, chat_id, amount, call=None):
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(pbtn(t(uid, "pay_method_bakong_btn"), callback_data=f"paym_bkq_{amount}", style="primary"))
-    kb.add(pbtn(t(uid, "pay_method_aba_btn"), callback_data=f"paym_aba_{amount}", style="primary"))
-    text = t(uid, "pay_method_choose", amount=amount)
-    if call:
-        _safe_edit_or_send(call, text, kb)
     else:
         bot.send_message(chat_id, text, reply_markup=kb)
 
@@ -3805,6 +3745,57 @@ def _handle_deposit_auto(uid, chat_id, amount, user_obj, call=None):
     th.start()
 
 
+
+def handle_deposit_by_hand(uid, chat_id, amount, user_obj, call=None):
+    """ដាក់លុយដោយដៃ (គ្មាន QR) — បង្កើត pending ឲ្យ Admin ✅/❌."""
+    amount = round(float(amount), 2)
+    if amount <= 0:
+        bot.send_message(chat_id, "❌ ចំនួនមិនត្រឹមត្រូវ")
+        return
+    dep_id = f"hand_{uid}_{int(time.time())}"
+    ref_disp = f"HAND-{hashlib.md5(dep_id.encode()).hexdigest()[:8].upper()}"
+    create_pending_deposit(dep_id, uid, amount, ref_disp)
+    try:
+        update_pending_deposit(dep_id, purpose="hand_topup", method="hand")
+    except Exception:
+        pass
+
+    bot.send_message(
+        chat_id,
+        f"⏳ <b>សំណើដាក់លុយដោយដៃ</b>\n"
+        f"💵 ចំនួន: <b>${amount:.2f}</b>\n"
+        f"🔖 <code>{ref_disp}</code>\n\n"
+        f"សូមផ្ញើប្រាក់តាមរបៀបដែល Admin បានប្រាប់ រួចរង់ចាំ Admin បញ្ជាក់។\n"
+        f"Wallet នឹងបញ្ចូលស្វ័យប្រវត្តិពេល Admin ចុច ✅។",
+    )
+
+    if ADMIN_ID:
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            pbtn(f"✅ បញ្ជាក់ +${amount:.2f}", callback_data=f"depapprove_{dep_id}", style="success"),
+            pbtn("❌ បដិសេធ", callback_data=f"depreject_{dep_id}", style="danger"),
+        )
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"🧾 <b>ដាក់លុយដោយដៃ (គ្មាន QR)</b>\n"
+                f"👤 {public_user_label(user_obj)} (<code>{uid}</code>)\n"
+                f"💵 ${amount:.2f}\n"
+                f"🔖 <code>{ref_disp}</code>\n"
+                f"ID: <code>{dep_id}</code>\n\n"
+                f"បញ្ជាក់ពេលទទួលលុយរួច → បញ្ចូល Wallet user។",
+                reply_markup=kb,
+            )
+        except Exception as e:
+            print(f"[handle_deposit_by_hand] admin notify: {e}", flush=True)
+    if call:
+        try:
+            bot.answer_callback_query(call.id)
+        except Exception:
+            pass
+
+
+
 def handle_deposit_manual(uid, chat_id, amount, user_obj, call=None):
     qr_file_id, qr_note = get_manual_qr()
     if not qr_file_id:
@@ -3886,8 +3877,15 @@ def _handle_deposit_approve(call, dep_id):
         return
     uid = rec["uid"]
     amount = rec["amount"]
-    new_balance = update_balance(uid, amount)
     update_pending_deposit(dep_id, status="approved")
+    if rec.get("purpose") == "purchase" and rec.get("product_key"):
+        fulfill_product_order(uid, uid, rec["product_key"], int(rec.get("qty") or 1), amount)
+        try:
+            bot.answer_callback_query(call.id, "✅ ផ្តល់ product រួច")
+        except Exception:
+            pass
+        return
+    new_balance = update_balance(uid, amount)
     try:
         bot.send_message(uid, t(uid, "deposit_approved", amount=amount, balance=new_balance, store=STORE_NAME))
     except Exception:
@@ -4230,17 +4228,70 @@ def broadcast_low_stock(key, left):
 def process_addstock(message, key):
     if not is_admin(message.from_user.id):
         return
-    items = message.text.split("\n")
-    added = len([i for i in items if i.strip()])
-    push_stock_items(key, items)
+    if (message.text or "").strip() == "-":
+        bot.reply_to(message, "🚫 បានបោះបង់។")
+        return
+
     products = load_products()
+    if key not in products:
+        bot.reply_to(message, "❌ Product មិនត្រឹមត្រូវ (ប្រហែលជាត្រូវបានលុប)")
+        return
+    pname = products[key].get("name", key)
+
+    lines = []
+    # text message
+    if message.text and not message.document:
+        lines = [ln.strip() for ln in message.text.splitlines() if ln.strip()]
+    # .txt document
+    elif message.document:
+        try:
+            fi = bot.get_file(message.document.file_id)
+            raw = bot.download_file(fi.file_path)
+            text = raw.decode("utf-8", errors="ignore")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        except Exception as e:
+            bot.reply_to(message, f"❌ មិនអាន file បាន: {e}")
+            return
+    else:
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ សូមផ្ញើ <b>អត្ថបទ</b> (មួយបន្ទាត់ = 1 account) ឬ <b>file .txt</b>\n"
+            "ឬវាយ <code>-</code> បោះបង់:",
+        )
+        bot.register_next_step_handler(msg, process_addstock, key)
+        return
+
+    if not lines:
+        msg = bot.send_message(message.chat.id, "❌ គ្មានបន្ទាត់ណាមួយ។ ផ្ញើម្តងទៀត:")
+        bot.register_next_step_handler(msg, process_addstock, key)
+        return
+
+    before = stock_count(key)
+    push_stock_items(key, lines)
+    after = stock_count(key)
+    added = after - before
     if key in products and products[key].get("low_stock_alerted"):
         products[key]["low_stock_alerted"] = False
         save_products(products)
-    bot.reply_to(message, f"✅ បន្ថែម {added} accounts ចូល stock '{key}'\n"
-                           f"ស្តុករួម: {stock_count(key)}")
-    sent, failed = broadcast_new_stock(key, added)
-    bot.send_message(message.chat.id, f"📢 ជូនដំណឹងទៅ user {sent} នាក់ ({failed} បរាជ័យ)")
+
+    # preview first 3
+    preview = "\n".join(f"• <code>{html.escape(x[:80])}</code>" for x in lines[:3])
+    more = f"\n… និង {len(lines) - 3} ទៀត" if len(lines) > 3 else ""
+
+    bot.reply_to(
+        message,
+        f"✅ <b>បញ្ចូល Stock រួច</b>\n"
+        f"🛍 {pname}\n"
+        f"➕ បន្ថែម: <b>{added}</b> accounts\n"
+        f"📦 ស្តុកសរុប: <b>{after}</b>\n\n"
+        f"ឧទាហរណ៍:\n{preview}{more}",
+    )
+    try:
+        sent, failed = broadcast_new_stock(key, added)
+        bot.send_message(message.chat.id, f"📢 ជូនដំណឹង user: {sent} ជោគជ័យ / {failed} បរាជ័យ")
+    except Exception as e:
+        print(f"[process_addstock] broadcast: {e}", flush=True)
+
 
 
 def process_delstock_indices(message, key):
@@ -4312,6 +4363,129 @@ def cmd_stats(message):
 
 
 @bot.message_handler(commands=["addbalance"])
+
+def addbalance_user_list_kb(page=0):
+    """បញ្ជី user ឲ្យ admin រើសដើម្បីបញ្ចូលលុយ."""
+    users = load_users()
+    ordered = _finduser_sorted_uids(users)
+    total = len(ordered)
+    start = page * FINDUSER_PAGE_SIZE
+    page_uids = ordered[start:start + FINDUSER_PAGE_SIZE]
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for uid_str in page_uids:
+        u = users[uid_str]
+        label = f"@{u['username']}" if u.get("username") else (
+            " ".join(p for p in [u.get("first_name"), u.get("last_name")] if p) or f"ID {uid_str}"
+        )
+        bal = float(u.get("balance") or 0)
+        kb.add(pbtn(
+            f"💵 {label} — ${bal:.2f}",
+            callback_data=f"adbal_{uid_str}_{page}",
+            style="success",
+        ))
+    nav = []
+    if page > 0:
+        nav.append(pbtn("⬅️ មុន", callback_data=f"adballist_{page - 1}", style="primary"))
+    if start + FINDUSER_PAGE_SIZE < total:
+        nav.append(pbtn("បន្ទាប់ ➡️", callback_data=f"adballist_{page + 1}", style="primary"))
+    if nav:
+        kb.row(*nav)
+    kb.row(pbtn("✏️ វាយ User ID ផ្ទាល់", callback_data="adbal_typeid", style="primary"))
+    kb.row(pbtn("🚫 បោះបង់", callback_data="admcancel", style="danger"))
+    return kb, total, page
+
+
+def addbalance_list_text(total, page):
+    if total == 0:
+        return "💵 <b>បញ្ចូលលុយ User</b>\n\nមិនទាន់មាន user។"
+    last = max(0, (total - 1) // FINDUSER_PAGE_SIZE)
+    return (
+        f"💵 <b>បញ្ចូលលុយ User</b>\n"
+        f"សរុប {total} នាក់ — ទំព័រ {page + 1}/{last + 1}\n\n"
+        f"រើស user ដែលចង់បញ្ចូលលុយ:"
+    )
+
+
+def _start_addbalance_flow(chat_id):
+    kb, total, page = addbalance_user_list_kb(0)
+    bot.send_message(chat_id, addbalance_list_text(total, page), reply_markup=kb)
+
+
+def admin_addbalance_amount_step(message, target_uid):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip().replace("$", "").replace(",", "")
+    if raw == "-":
+        bot.send_message(message.chat.id, "🚫 បានបោះបង់។")
+        return
+    try:
+        amount = round(float(raw), 2)
+    except (TypeError, ValueError):
+        msg = bot.send_message(message.chat.id, "❌ សូមវាយជាលេខ (ឧ. 5 ឬ 10.5)។ វាយម្តងទៀត ឬ <code>-</code> បោះបង់:")
+        bot.register_next_step_handler(msg, admin_addbalance_amount_step, target_uid)
+        return
+    if amount == 0:
+        bot.send_message(message.chat.id, "❌ ចំនួនមិនអាច 0")
+        return
+    label = stored_user_label(target_uid)
+    new_balance = update_balance(target_uid, amount)
+    sign = "+" if amount > 0 else ""
+    bot.send_message(
+        message.chat.id,
+        f"✅ បានបញ្ចូល <b>{sign}${amount:.2f}</b> ទៅ {label} (<code>{target_uid}</code>)\n"
+        f"💰 សមតុល្យថ្មី: <b>${new_balance:.2f}</b>",
+    )
+    try:
+        bot.send_message(
+            target_uid,
+            f"💰 Admin បានបញ្ចូលលុយ <b>{sign}${amount:.2f}</b> ចូល Wallet របស់អ្នក។\n"
+            f"សមតុល្យថ្មី: <b>${new_balance:.2f}</b>",
+        )
+    except Exception:
+        bot.send_message(message.chat.id, "⚠️ មិនអាចផ្ញើជូនដំណឹងទៅ user (block bot?)។")
+
+
+def admin_addbalance_typeid_step(message):
+    if not is_admin(message.from_user.id):
+        return
+    raw = (message.text or "").strip()
+    if raw == "-":
+        bot.send_message(message.chat.id, "🚫 បានបោះបង់។")
+        return
+    try:
+        target_uid = int(raw)
+    except ValueError:
+        msg = bot.send_message(message.chat.id, "❌ សូមវាយ User ID ជាលេខ។ ឬ <code>-</code> បោះបង់:")
+        bot.register_next_step_handler(msg, admin_addbalance_typeid_step)
+        return
+    label = stored_user_label(target_uid)
+    u = get_user(target_uid)
+    msg = bot.send_message(
+        message.chat.id,
+        f"💵 User: {label} (<code>{target_uid}</code>)\n"
+        f"💰 សមតុល្យបច្ចុប្បន្ន: <b>${float(u.get('balance') or 0):.2f}</b>\n\n"
+        f"វាយចំនួនដែលចង់បញ្ចូល (USD) — អាចដាក់លេខអវិជ្ជមានដើម្បីដក។\n"
+        f"ឧ. <code>10</code> ឬ <code>-5</code>\n"
+        f"ឬ <code>-</code> បោះបង់:",
+    )
+    bot.register_next_step_handler(msg, admin_addbalance_amount_step, target_uid)
+
+
+@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_ADDBALANCE))
+def reply_admin_addbalance(message):
+    if not is_admin(message.from_user.id):
+        return
+    _start_addbalance_flow(message.chat.id)
+
+
+@bot.message_handler(commands=["addmoney", "credit"])
+def cmd_addmoney(message):
+    if not is_admin(message.from_user.id):
+        return
+    _start_addbalance_flow(message.chat.id)
+
+
+
 def cmd_addbalance(message):
     if not is_admin(message.from_user.id):
         return
@@ -4452,78 +4626,6 @@ def admin_setnotify_step(message):
         add_notify_chat_id(chat_id)
         bot.send_message(message.chat.id, f"✅ បានបន្ថែម <code>{chat_id}</code> ជាកន្លែងជូនដំណឹងរួចរាល់!\n\n{_notify_list_text()}")
 
-
-# ------------------------------------------------------------------
-# បិទ/បើក វិធីទូទាត់ (ADMIN_BTN_PAYTOGGLE) — admin អាចបិទ/បើក Bakong KHQR,
-# ABA PayWay, ឬ Manual QR ដោយឯករាជ្យពីគ្នា ដោយមិនចាំបាច់លុប env var ចោលទេ
-# (ឧ. ចង់បិទ Bakong បណ្តោះអាសន្នព្រោះ CamRapidPay down តែមិនចង់លុប API key)
-# ------------------------------------------------------------------
-_PAYTOGGLE_LABELS = {
-    "bakong": "Bakong KHQR (CamRapidPay)",
-    "aba": "ABA PayWay (KHMER SYSTEM)",
-    "manual": "QR ទូទាត់ដោយដៃ",
-}
-
-
-def _paytoggle_status_lines():
-    lines = []
-    for method in PAYMENT_METHOD_KEYS:
-        label = _PAYTOGGLE_LABELS[method]
-        if method == "bakong":
-            configured = bool(CAMRAPIDPAY_API_KEY)
-        elif method == "aba":
-            configured = bool(ABA_API_KEY and ABA_MERCHANT_ID)
-        else:
-            configured = True  # manual QR មិនអាស្រ័យ env var ទេ (កំណត់តាម ➕ SETQR)
-        enabled = is_payment_method_enabled(method)
-        if not configured:
-            status = "⚪ មិនទាន់កំណត់ (គ្មាន API key ក្នុង env)"
-        elif enabled:
-            status = "✅ បើក"
-        else:
-            status = "❌ បិទ"
-        lines.append(f"├ {label}: {status}")
-    return "\n".join(lines)
-
-
-def _paytoggle_kb():
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    for method in PAYMENT_METHOD_KEYS:
-        enabled = is_payment_method_enabled(method)
-        action_label = "❌ បិទ" if enabled else "✅ បើក"
-        kb.add(pbtn(
-            f"{action_label} — {_PAYTOGGLE_LABELS[method]}",
-            callback_data=f"paytoggle_{method}",
-            style="danger" if enabled else "success",
-        ))
-    return kb
-
-
-def _paytoggle_text():
-    return (
-        f"🔀 <b>បិទ/បើក វិធីទូទាត់</b>\n\n"
-        f"{_paytoggle_status_lines()}\n\n"
-        f"ចុចប៊ូតុងខាងក្រោមដើម្បីបិទ/បើកវិធីនីមួយៗ។ វិធីណាមួយបិទ user នឹងលែងឃើញជាជម្រើសពេលចុច /deposit "
-        f"(បើវិធីទាំងអស់ត្រូវបានបិទ user នឹងទទួលបានសារឲ្យទាក់ទង Admin ដោយផ្ទាល់)។"
-    )
-
-
-def _start_paytoggle_flow(chat_id):
-    bot.send_message(chat_id, _paytoggle_text(), reply_markup=_paytoggle_kb())
-
-
-@bot.message_handler(func=lambda m: norm_label(m.text) == norm_label(ADMIN_BTN_PAYTOGGLE))
-def reply_admin_paytoggle(message):
-    if not is_admin(message.from_user.id):
-        return
-    _start_paytoggle_flow(message.chat.id)
-
-
-@bot.message_handler(commands=["paytoggle"])
-def cmd_paytoggle(message):
-    if not is_admin(message.from_user.id):
-        return
-    _start_paytoggle_flow(message.chat.id)
 
 
 # ------------------------------------------------------------------
