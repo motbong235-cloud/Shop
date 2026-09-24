@@ -99,7 +99,9 @@ ABA_CHECK_URL = os.environ.get("ABA_CHECK_URL", f"{ABA_BASE_URL}/aba-api/check-p
 BUYER_API_BASE = os.environ.get("BUYER_API_BASE", "http://15.235.133.206:55033").rstrip("/")
 BUYER_API_KEY = os.environ.get("BUYER_API_KEY", "")
 BUYER_API_TIMEOUT = float(os.environ.get("BUYER_API_TIMEOUT", "30"))
-STORE_NAME = os.environ.get("STORE_NAME", "RS-PREMIUM")  # ឈ្មោះហាង — hardcode ជា default តែអាច override តាម env
+# Auto-sync stock ពី supplier រៀងរាល់ N វិនាទី (0 = បិទ) — ពេលស្តុកចូល bot ជូនដំណឹង user
+BUYER_API_SYNC_INTERVAL = int(os.environ.get("BUYER_API_SYNC_INTERVAL", "300"))
+STORE_NAME = os.environ.get("STORE_NAME", "Kairozen Store")  # ឈ្មោះហាង — hardcode ជា default តែអាច override តាម env
 # ID របស់ channel/group ដែលចង់ឲ្យ bot ផ្ញើសារជូនដំណឹងស្វ័យប្រវត្តិ ពេលមាន deposit
 # ឬ order ជោគជ័យ។ ដាក់ hardcode ត្រង់នេះផ្ទាល់ (negative number ឧ. -1001234567890
 # សម្រាប់ channel/supergroup) — អាចដាក់ច្រើនក្នុងមួយ list បាន ១ សម្រាប់ channel ១ សម្រាប់ group។
@@ -144,6 +146,8 @@ PENDING_DEPOSITS_FILE = os.path.join(DATA_DIR, "pending_deposits.json")
 # ករណី product ប្រភេទ "email" (មិនមែនចែក account ពី stock file ទេ) — pending
 # រហូតដល់ admin ដាក់ Premium ចូល email របស់ user ដោយផ្ទាល់ រួចចុច 'រួចរាល់'
 PENDING_EMAIL_ORDERS_FILE = os.path.join(DATA_DIR, "pending_email_orders.json")
+# User ដែល block bot / deactivated — មិនផ្ញើ broadcast / stock notify ទៀត
+BLOCKED_USERS_FILE = os.path.join(DATA_DIR, "blocked_users.json")
 os.makedirs(STOCK_DIR, exist_ok=True)
 
 
@@ -209,20 +213,55 @@ def btn_label(key, lang):
     return BTN_LABELS[key].get(lang, BTN_LABELS[key][DEFAULT_LANG])
 
 
+def _strip_leading_emoji(s):
+    """លុប emoji/symbol ខាងដើមចេញ ដើម្បី match ប៊ូតុង ទោះ user វាយគ្មាន emoji ក៏ដោយ។"""
+    if not s:
+        return s
+    import re
+    # លុប emoji / variation selectors / មូលដ្ឋាន symbol ខាងមុខ + space
+    return re.sub(
+        r"^[\s\U0001F300-\U0001FAFF\U00002700-\U000027BF\U00002600-\U000026FF\U0000FE00-\U0000FE0F\U0000200D]+",
+        "",
+        s,
+    ).strip()
+
+
 def is_btn(text, key):
     """ពិនិត្យថាតើ text (ពី reply keyboard) ត្រូវនឹងប៊ូតុង key នេះ ដោយមិនគិតថា user
-    កំពុងប្រើភាសាមួយណា (ដូច្នេះបើ user ប្តូរភាសា ប៉ុន្តែ Telegram client នៅមិនទាន់ refresh
-    keyboard ចាស់ ក៏នៅតែចុចដំណើរការធម្មតា)"""
+    កំពុងប្រើភាសាមួយណា — match ទាំងមាន emoji និងគ្មាន (ឧ. «ទិញ Account» = «🛒 ទិញ Account»)."""
+    if not text:
+        return False
     n = norm_label(text)
-    return any(norm_label(BTN_LABELS[key][l]) == n for l in SUPPORTED_LANGS)
+    n2 = _strip_leading_emoji(n)
+    for l in SUPPORTED_LANGS:
+        label = BTN_LABELS[key][l]
+        nl = norm_label(label)
+        if n == nl or n2 == nl:
+            return True
+        if n2 and n2 == _strip_leading_emoji(nl):
+            return True
+    return False
+
+
+def _clear_chat_steps(chat_id):
+    """លុប next_step_handler ជាប់ (បើមាន) — ឲ្យ /start និងប៊ូតុងដំណើរការវិញ។"""
+    try:
+        bot.clear_step_handler_by_chat_id(chat_id)
+    except Exception:
+        try:
+            # fallback versions ចាស់
+            if hasattr(bot, "clear_step_handler"):
+                bot.clear_step_handler(chat_id)
+        except Exception:
+            pass
 
 
 # --- Translation strings សម្រាប់ផ្នែក Customer ---
 TR = {
     "start_greeting": {
-        "km": "👋 ជម្រាបសួរ {name}! សូមស្វាគមន៍មកកាន់ {store}! 🎉",
-        "en": "👋 Hello {name}! Welcome to {store}! 🎉",
-        "zh": "👋 你好 {name}！欢迎来到 {store}！🎉",
+        "km": "👋 ជម្រាបសួរ <b>{name}</b>!\nសូមស្វាគមន៍មកកាន់ <b>{store}</b> 🎉",
+        "en": "👋 Hello <b>{name}</b>!\nWelcome to <b>{store}</b> 🎉",
+        "zh": "👋 你好 <b>{name}</b>！\n欢迎来到 <b>{store}</b> 🎉",
     },
     "start_name_line": {
         "km": "👤 ឈ្មោះ: <b>{name}</b>",
@@ -235,11 +274,18 @@ TR = {
     "orders_total_word": {"km": "ការបញ្ជាទិញសរុប", "en": "Total Orders", "zh": "总订单数"},
     "users_total_word": {"km": "អ្នកប្រើប្រាស់សរុប", "en": "Total Users", "zh": "总用户数"},
     "buyers_total_word": {"km": "អ្នកទិញសរុប", "en": "Total Buyers", "zh": "总买家数"},
+    "products_available_word": {"km": "ទំនិញមានលក់", "en": "Products available", "zh": "在售商品"},
+    "your_orders_word": {"km": "ការកម្មង់របស់អ្នក", "en": "Your orders", "zh": "您的订单"},
     "features_header": {"km": "📖 <b>មុខងារ</b>", "en": "📖 <b>Features</b>", "zh": "📖 <b>功能</b>"},
+    "start_features_body": {
+        "km": "🛒 ទិញ Premium Account\n💰 ដាក់លុយ Wallet (KHQR / ABA)\n📦 មើលប្រវត្តិការកម្មង់",
+        "en": "🛒 Buy Premium Accounts\n💰 Top up Wallet (KHQR / ABA)\n📦 View order history",
+        "zh": "🛒 购买高级账号\n💰 钱包充值 (KHQR / ABA)\n📦 查看订单记录",
+    },
     "start_footer": {
-        "km": "💬 ចុចប៊ូតុងខាងក្រោមដើម្បីប្រើប្រាស់!",
-        "en": "💬 Tap a button below to get started!",
-        "zh": "💬 点击下方按钮开始使用！",
+        "km": "💬 ចុចប៊ូតុងខាងក្រោមដើម្បីទិញ / ដាក់លុយ!",
+        "en": "💬 Tap a button below to shop or deposit!",
+        "zh": "💬 点击下方按钮购买或充值！",
     },
     "balance_word": {"km": "ទឹកប្រាក់", "en": "Balance", "zh": "余额"},
     "wallet_current": {
@@ -904,10 +950,23 @@ def _build_styled_button(cls, text, style, icon_id, clean_text, use_text, **kw):
 def pbtn(text, callback_data=None, style=None, url=None, **kw):
     """InlineKeyboardButton (ប៊ូតុងភ្ជាប់នឹងសារ) ជាមួយ icon premium (បើមាន) + style ពណ៌
     (Bot API 9.4: success/danger/primary)។ បង្ខំដាក់ style/icon_custom_emoji_id ចូល JSON
-    ជានិច្ច (មើល _patch_button_serialize ខាងលើ)។"""
+    ជានិច្ច (មើល _patch_button_serialize ខាងលើ)។
+    Telegram limit callback_data = 64 bytes — កាត់ឲ្យខ្លីបើវែងពេក។"""
+    if callback_data is not None:
+        cb = str(callback_data)
+        # UTF-8 byte length (Telegram counts bytes)
+        if len(cb.encode("utf-8")) > 64:
+            cb = cb.encode("utf-8")[:64].decode("utf-8", errors="ignore")
+            print(f"[pbtn] callback_data truncated to 64 bytes: {cb!r}", flush=True)
+        callback_data = cb
     glyph, icon_id = emoji_icon_for(text)
     clean_text = _strip_glyph(text, glyph) if glyph else text
     use_text = clean_text if icon_id else text
+    # button text limit ~64 chars
+    if use_text and len(use_text) > 64:
+        use_text = use_text[:61] + "…"
+    if clean_text and len(clean_text) > 64:
+        clean_text = clean_text[:61] + "…"
     return _build_styled_button(
         types.InlineKeyboardButton, text, style, icon_id, clean_text, use_text,
         callback_data=callback_data, url=url, **kw,
@@ -1415,6 +1474,86 @@ def load_users():
 
 def save_users(d):
     _save(USERS_FILE, d)
+
+
+def load_blocked_users():
+    """set នៃ uid (str) ដែល block bot ឬ account deactivated — skip ពេល broadcast."""
+    data = _load(BLOCKED_USERS_FILE, {})
+    if isinstance(data, list):
+        return {str(x) for x in data}
+    if isinstance(data, dict):
+        return {str(k) for k in data.keys()}
+    return set()
+
+
+def save_blocked_users(blocked_set):
+    # រក្សាជា dict uid → timestamp ដើម្បីដឹងពេលណា block
+    existing = _load(BLOCKED_USERS_FILE, {})
+    if not isinstance(existing, dict):
+        existing = {}
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    for uid in blocked_set:
+        uid_s = str(uid)
+        if uid_s not in existing:
+            existing[uid_s] = now
+    # លុប uid ដែលមិននៅក្នុង set (unblock)
+    for uid_s in list(existing.keys()):
+        if uid_s not in {str(x) for x in blocked_set}:
+            # កុំលុបពេល mark_blocked បន្ថែម — save ពេញ set តែពេល explicit
+            pass
+    _save(BLOCKED_USERS_FILE, existing)
+
+
+def mark_user_blocked(uid):
+    """កត់ថា user នេះ block bot — លើកក្រោយ broadcast នឹង skip."""
+    with _lock:
+        data = _load(BLOCKED_USERS_FILE, {})
+        if not isinstance(data, dict):
+            data = {}
+        data[str(uid)] = time.strftime("%Y-%m-%d %H:%M:%S")
+        _save(BLOCKED_USERS_FILE, data)
+
+
+def unmark_user_blocked(uid):
+    with _lock:
+        data = _load(BLOCKED_USERS_FILE, {})
+        if isinstance(data, dict) and str(uid) in data:
+            data.pop(str(uid), None)
+            _save(BLOCKED_USERS_FILE, data)
+
+
+def is_user_blocked(uid):
+    data = _load(BLOCKED_USERS_FILE, {})
+    if isinstance(data, dict):
+        return str(uid) in data
+    if isinstance(data, list):
+        return str(uid) in {str(x) for x in data}
+    return False
+
+
+def _is_blocked_error(err):
+    """True បើ Telegram error បង្ហាញថា user block bot / deactivated / chat not found."""
+    s = str(err).lower()
+    markers = (
+        "bot was blocked by the user",
+        "user is deactivated",
+        "chat not found",
+        "forbidden: bot was blocked",
+        "forbidden: user is deactivated",
+        "peer_id_invalid",
+        "have no rights to send a message",
+    )
+    return any(m in s for m in markers)
+
+
+def iter_broadcast_uids():
+    """uid ទាំងអស់ក្នុង users.json លើកលែង blocked — សម្រាប់ broadcast / stock notify."""
+    users = load_users()
+    blocked = load_blocked_users()
+    for uid_s in users.keys():
+        if str(uid_s) in blocked:
+            continue
+        yield uid_s
 
 
 def load_products():
@@ -2012,13 +2151,17 @@ def _normalize_api_product(raw):
     }
 
 
-def sync_products_from_buyer_api(overwrite_price=False):
+def sync_products_from_buyer_api(overwrite_price=False, notify_restock=True):
     """ទាញ products ពី Buyer API រួចបង្កើត/update local products (delivery_type=api).
-    Return (added, updated, skipped, error_msg)"""
+    បើ product ពីមុនអស់ស្តុក (api_stock=0) រួច API មានស្តុកវិញ → broadcast ជូន user។
+    Return (added, updated, skipped, error_msg, restocked_list)
+    restocked_list = [(key, old_stock, new_stock), ...]
+    """
     remote = buyer_api_products()
     if remote is None:
-        return 0, 0, 0, _last_buyer_api_error or "API error"
+        return 0, 0, 0, _last_buyer_api_error or "API error", []
     added, updated, skipped = 0, 0, 0
+    restocked = []  # (key, old_stock, new_stock)
     with _lock:
         products = load_products()
         for raw in remote:
@@ -2027,7 +2170,6 @@ def sync_products_from_buyer_api(overwrite_price=False):
                 skipped += 1
                 continue
             api_id = np["id"]
-            # រក product មូលដ្ឋានដែលភ្ជាប់ api_product_id នេះរួច
             existing_key = None
             for k, p in products.items():
                 if str(p.get("api_product_id")) == str(api_id):
@@ -2035,33 +2177,74 @@ def sync_products_from_buyer_api(overwrite_price=False):
                     break
             if existing_key:
                 p = products[existing_key]
+                old_stock = p.get("api_stock")
+                try:
+                    old_n = int(old_stock) if old_stock is not None else None
+                except (TypeError, ValueError):
+                    old_n = None
                 p["delivery_type"] = "api"
                 p["api_product_id"] = api_id
+                new_n = None
                 if np["stock"] is not None:
-                    p["api_stock"] = np["stock"]
+                    try:
+                        new_n = max(0, int(np["stock"]))
+                    except (TypeError, ValueError):
+                        new_n = None
+                    p["api_stock"] = new_n
                 if overwrite_price and np["price"] > 0:
                     p["price"] = np["price"]
                 if np["description"] and not p.get("description"):
                     p["description"] = np["description"]
                 products[existing_key] = p
                 updated += 1
+                # ចូលស្តុក = ពីមុន 0 (ឬអស់) → ឥឡូវ > 0
+                if new_n is not None and new_n > 0:
+                    if old_n is not None and old_n <= 0:
+                        restocked.append((existing_key, old_n, new_n))
+                    elif old_n is not None and new_n > old_n and old_n < 3:
+                        # ស្តុកតិច → កើនឡើង (optional soft restock signal)
+                        restocked.append((existing_key, old_n, new_n))
             else:
                 base_key = slugify_key(f"api_{api_id}_{np['name']}")
                 key = unique_key(base_key, products)
+                new_n = np["stock"]
+                try:
+                    new_n = int(new_n) if new_n is not None else None
+                except (TypeError, ValueError):
+                    new_n = None
                 products[key] = {
                     "name": np["name"],
                     "price": np["price"] if np["price"] > 0 else 1.0,
-                    "icon": np["icon"] or "🔌",
+                    "icon": np["icon"] or "📦",
                     "delivery_type": "api",
                     "api_product_id": api_id,
-                    "api_stock": np["stock"],
+                    "api_stock": new_n,
                     "description": np["description"],
                     "photo_file_id": None,
                     "sold": 0,
                 }
                 added += 1
+                # product ថ្មីមានស្តុក — ជូនដំណឹងដែរ
+                if new_n is not None and new_n > 0:
+                    restocked.append((key, 0, new_n))
         save_products(products)
-    return added, updated, skipped, None
+
+    if notify_restock and restocked:
+        # ប្រើ thread កុំ block admin callback
+        def _do_notify(items):
+            seen = set()
+            for key, old_s, new_s in items:
+                if key in seen:
+                    continue
+                seen.add(key)
+                added_count = max(1, int(new_s) - max(0, int(old_s or 0)))
+                try:
+                    broadcast_new_stock(key, added_count)
+                except Exception as e:
+                    print(f"[sync api restock notify] {key}: {e}", flush=True)
+        threading.Thread(target=_do_notify, args=(list(restocked),), daemon=True).start()
+
+    return added, updated, skipped, None, restocked
 
 
 def peek_stock_items(product_key, limit=None):
@@ -2593,8 +2776,11 @@ def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5
                     except Exception as e:
                         print(f"[poll_deposit] on_success failed: {e}", flush=True)
                         notify_admin_error(f"poll_deposit on_success (uid={uid}, amount={amount})", e)
+                    # លុប lock ភ្លាមៗ មុន return (finally ក៏ clear ដែរ — double-safe)
+                    _clear_active_auto_deposit(uid)
                     return
                 new_balance = update_balance(uid, amount)
+                _clear_active_auto_deposit(uid)
                 try:
                     bot.send_message(uid, t(uid, "auto_deposit_success", amount=amount, balance=new_balance, store=STORE_NAME))
                 except Exception:
@@ -2826,14 +3012,36 @@ def _edit_or_resend_shop(call, uid, page):
         send_with_banner(chat_id, "shop", text, reply_markup=kb)
 
 
-def _safe_edit_or_send(call, text, reply_markup):
-    """ព្យាយាម edit សារដើម (menu_shop list) ជាអត្ថបទថ្មី — បើ edit មិនកើត (ឧ. សារដើម
-    ជារូបភាព ដែល Telegram មិនអនុញ្ញាតឲ្យប្តូរទៅជាអត្ថបទបានទេ) នោះផ្ញើសារថ្មីជំនួសវិញ"""
+def _safe_edit_or_send(call, text, reply_markup=None):
+    """ព្យាយាម edit សារដើម — បើសារជារូបភាព/caption មិនអាចប្តូរទៅ text បាន
+    ឬ edit បរាជ័យ → ផ្ញើសារថ្មី (កុំឲ្យ user ចុចប៊ូតុងហើយគ្មានអ្វីកើតឡើង)។"""
     chat_id = call.message.chat.id
+    mid = call.message.message_id
+    has_photo = bool(getattr(call.message, "photo", None))
+    # 1) បើ photo — ព្យាយាម edit caption
+    if has_photo:
+        try:
+            bot.edit_message_caption(
+                caption=text, chat_id=chat_id, message_id=mid, reply_markup=reply_markup,
+            )
+            return
+        except Exception as e:
+            print(f"[_safe_edit_or_send] edit_caption failed: {e}", flush=True)
+    # 2) edit text
     try:
-        bot.edit_message_text(text, chat_id, call.message.message_id, reply_markup=reply_markup)
-    except Exception:
+        bot.edit_message_text(text, chat_id, mid, reply_markup=reply_markup)
+        return
+    except Exception as e:
+        err = str(e).lower()
+        # "message is not modified" = រួចហើយ មិនត្រូវ send សារថ្មី
+        if "not modified" in err:
+            return
+        print(f"[_safe_edit_or_send] edit_text failed: {e}", flush=True)
+    # 3) fallback — សារថ្មី
+    try:
         bot.send_message(chat_id, text, reply_markup=reply_markup)
+    except Exception as e:
+        print(f"[_safe_edit_or_send] send_message failed: {e}", flush=True)
 
 
 def _product_plan_label(p, key):
@@ -2870,34 +3078,25 @@ def show_product_detail(call, product_key):
     group_items = _group_products(products, product_key)
 
     total_sold = sum(int(gp.get("sold") or 0) for _, gp in group_items)
-    stock_items = [
+    # Stock + API បង្ហាញចំនួនស្តុកដូចគ្នា (api_stock ពី sync) — មិនដាក់ label "Buyer API"
+    sellable_items = [
         (k, gp) for k, gp in group_items
-        if gp.get("delivery_type") not in ("email", "api") and not gp.get("api_product_id")
+        if gp.get("delivery_type") != "email"
     ]
     email_items = [(k, gp) for k, gp in group_items if gp.get("delivery_type") == "email"]
-    api_items = [
-        (k, gp) for k, gp in group_items
-        if gp.get("delivery_type") == "api" or gp.get("api_product_id")
-    ]
 
-    if not stock_items and not api_items:
+    if not sellable_items:
         # គ្រប់ Plan សុទ្ធតែជា Email — មិនកំណត់ស្តុក
-        stock_line = "📧 Delivery: Email"
+        stock_line = "📦 ស្តុក: ∞ (Email)"
         all_oos = False
-    elif api_items and not stock_items:
-        api_left = sum(max(0, stock_count(k)) for k, _ in api_items)
-        stock_line = f"🔌 Delivery: Buyer API · stock ≈ <b>{api_left if api_left < 999 else '∞'}</b>"
-        all_oos = api_left <= 0
     else:
-        left = sum(max(0, stock_count(k)) for k, _ in stock_items)
-        extra = []
+        left = sum(max(0, stock_count(k)) for k, _ in sellable_items)
+        # បើមាន api_stock=None (មិនទាន់ sync) stock_count ត្រឡប់ 999 — បង្ហាញចំនួនពិត
+        disp = left if left < 999 else "∞"
+        stock_line = f"📦 ស្តុកមាន: <b>{disp}</b>"
         if email_items:
-            extra.append("📧 មាន Plan Email")
-        if api_items:
-            extra.append("🔌 មាន Plan API")
-        extra_line = ("\n" + " · ".join(extra)) if extra else ""
-        stock_line = f"📦 ស្តុកមាន: <b>{left}</b>{extra_line}"
-        all_oos = left <= 0 and not email_items and not api_items
+            stock_line += "\n📧 មាន Plan Email ផងដែរ"
+        all_oos = left <= 0 and not email_items
 
     # ទោះ icon/product មាន Premium Emoji កំណត់ក៏ដោយ បើអស់ស្តុកទាំងស្រុង ត្រូវប្តូរទៅ ❌
     # ជំនួសវិញ ដើម្បីកុំឲ្យមើលទៅហាក់ដូចជានៅមានលក់ (ដូចលេចឡើងជា Premium Emoji ភ្លឺៗ)
@@ -3139,7 +3338,7 @@ def fulfill_product_order(uid, chat_id, product_key, qty, amount_paid):
         except Exception as e:
             print(f"[fulfill_product_order/api] send to user failed: {e}", flush=True)
         notify_public(
-            f"🛒 <b>Order ថ្មី! (API)</b>\n👤 {stored_user_label(uid)} (<code>{uid}</code>)\n"
+            f"🛒 <b>Order ថ្មី!</b>\n👤 {stored_user_label(uid)} (<code>{uid}</code>)\n"
             f"🛍️ {p.get('name', product_key)} × {got}\n💵 ${amount_paid:.2f}"
         )
         return
@@ -3714,6 +3913,13 @@ def lang_pick_kb():
 # ------------------------------------------------------------------
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
+    # លុប next_step ជាប់ (បើ admin/user ជាប់ flow មុន) — ឲ្យ /start តបជានិច្ច
+    _clear_chat_steps(message.chat.id)
+    # បើ user unblock bot រួច /start ម្តងទៀត — លុបពី blocked list
+    try:
+        unmark_user_blocked(message.from_user.id)
+    except Exception:
+        pass
     get_user(message.from_user.id)
     touch_user_profile(
         message.from_user.id,
@@ -3724,20 +3930,40 @@ def cmd_start(message):
     )
     uid = message.from_user.id
     lang = get_user_lang(uid)
-    first_name = message.from_user.first_name or ("មិត្ត" if lang == "km" else ("Friend" if lang == "en" else "朋友"))
+    first_name = message.from_user.first_name or (
+        "មិត្ត" if lang == "km" else ("Friend" if lang == "en" else "朋友")
+    )
     u = get_user(uid)
-    username = getattr(message.from_user, "username", None)
-    username_line = f"@{username}" if username else t(uid, "account_username_none")
-    # ចំនួនអ្នកទិញ = user ម្នាក់ៗដែលធ្លាប់មាន order យ៉ាងហោចណាស់ 1 (unique buyers)
-    total_buyers = len({o["uid"] for o in load_orders() if o.get("uid") is not None})
+    # ទំនិញមានលក់ = App/product ដែលនៅមាន stock (ឬ email/api)
+    products = load_products()
+    seen_groups = set()
+    products_available = 0
+    for key, prod in products.items():
+        g = (prod.get("group") or "").strip()
+        if g:
+            if g in seen_groups:
+                continue
+            seen_groups.add(g)
+            any_ok = any(
+                (sp.get("delivery_type") == "email") or stock_count(sk) > 0
+                for sk, sp in products.items()
+                if (sp.get("group") or "").strip() == g
+            )
+            if any_ok:
+                products_available += 1
+        else:
+            if prod.get("delivery_type") == "email" or stock_count(key) > 0:
+                products_available += 1
+    my_orders = int(u.get("orders") or 0)
     text = (
-        f"{t(uid, 'start_name_line', name=first_name)}\n\n"
+        f"{t(uid, 'start_greeting', name=html.escape(str(first_name)), store=html.escape(str(STORE_NAME)))}\n\n"
         f"{t(uid, 'account_info_header')}\n"
         f"├ ID: <code>{uid}</code>\n"
-        f"├ Username: {username_line}\n"
-        f"└ {t(uid, 'balance_word')}: ${u['balance']:.2f}\n\n"
-        f"{t(uid, 'account_stats_header')}\n"
-        f"└ {t(uid, 'buyers_total_word')}: <b>{total_buyers}</b>\n\n"
+        f"└ {t(uid, 'balance_word')}: <b>${float(u.get('balance') or 0):.2f}</b>\n\n"
+        f"{t(uid, 'features_header')}\n"
+        f"{t(uid, 'start_features_body')}\n\n"
+        f"📦 {t(uid, 'products_available_word')}: <b>{products_available}</b>\n"
+        f"🧾 {t(uid, 'your_orders_word')}: <b>{my_orders}</b>\n\n"
         f"{t(uid, 'start_footer')}"
     )
     send_with_banner(message.chat.id, "welcome", text, reply_markup=reply_kb_for(uid))
@@ -3783,6 +4009,7 @@ def cmd_orders(message):
 # ------------------------------------------------------------------
 @bot.message_handler(func=lambda m: is_btn(m.text, "shop"))
 def reply_shop(message):
+    _clear_chat_steps(message.chat.id)
     uid = message.from_user.id
     send_with_banner(message.chat.id, "shop", shop_list_text(uid), reply_markup=products_kb(uid, 0))
 
@@ -3877,16 +4104,16 @@ def admin_product_pick_kb(prefix, empty_stock_only=False):
         dtype = p.get("delivery_type") or "stock"
         if dtype == "email":
             left = "∞"
-        elif dtype == "api":
-            left = "API"
         else:
-            left = str(stock_count(key))
+            # stock + api — បង្ហាញចំនួនពិត (api_stock) មិនដាក់ពាក្យ "API"
+            sc = stock_count(key)
+            left = "∞" if sc >= 999 else str(sc)
         sold = p.get("sold", 0)
         price = float(p.get("price") or 0)
         if p.get("group") or p.get("plan"):
             app = p.get("group_title") or p.get("group") or ""
             plan = p.get("plan") or "default"
-            label = f"{icon} {app} · {plan} • ${price:.2f} · {left}"
+            label = f"{icon} {app} · {plan} • ${price:.2f} · ស្តុក {left}"
         else:
             label = f"{icon} {p.get('name', key)} • ${price:.2f} · ស្តុក {left} · លក់ {sold}"
         # Telegram button text limit ~64 chars
@@ -4301,49 +4528,80 @@ def _render_finduser_detail(target_uid):
 
 
 def broadcast_step_content(message):
+    """Broadcast ក្នុង background thread — កុំ block bot ឲ្យអត់តប /start ឬប៊ូតុង។
+    Skip user ដែល block bot រួច (blocked_users.json)."""
     if not is_admin(message.from_user.id):
         return
-    users = load_users()
-    uids = list(users.keys())
+    uids = list(iter_broadcast_uids())
+    skipped_blocked = len(load_users()) - len(uids)
     total = len(uids)
-    status = bot.send_message(message.chat.id, f"⏳ កំពុងផ្ញើ... 0/{total}")
-
-    sent, failed = 0, 0
-    for i, uid_str in enumerate(uids, start=1):
-        try:
-            target_uid = int(uid_str)
-        except Exception:
-            failed += 1
-            continue
-        try:
-            if message.content_type == "text":
-                bot.send_message(target_uid, f"📢 <b>សារពី Admin</b>\n\n{message.text}")
-            elif message.content_type == "photo":
-                bot.send_photo(target_uid, message.photo[-1].file_id, caption=message.caption or "")
-            elif message.content_type == "video":
-                bot.send_video(target_uid, message.video.file_id, caption=message.caption or "")
-            elif message.content_type == "document":
-                bot.send_document(target_uid, message.document.file_id, caption=message.caption or "")
-            else:
-                bot.forward_message(target_uid, message.chat.id, message.message_id)
-            sent += 1
-        except Exception:
-            failed += 1
-        time.sleep(0.05)
-        if i % 20 == 0 or i == total:
-            try:
-                bot.edit_message_text(
-                    f"⏳ កំពុងផ្ញើ... {i}/{total} (✅ {sent} / ❌ {failed})",
-                    message.chat.id,
-                    status.message_id,
-                )
-            except Exception:
-                pass
-
-    bot.send_message(
-        message.chat.id,
-        f"✅ <b>ផ្ញើសារបញ្ចប់</b>\n\nសរុប: {total}\nជោគជ័យ: {sent}\nបរាជ័យ: {failed}",
+    chat_id = message.chat.id
+    status = bot.send_message(
+        chat_id,
+        f"⏳ កំពុងផ្ញើ... 0/{total}"
+        f"{f' (skip block {skipped_blocked})' if skipped_blocked else ''}\n"
+        f"(bot នៅតែឆ្លើយសារផ្សេងបាន)",
     )
+
+    content_type = message.content_type
+    text_body = message.text
+    caption = message.caption or ""
+    photo_id = message.photo[-1].file_id if content_type == "photo" and message.photo else None
+    video_id = message.video.file_id if content_type == "video" and message.video else None
+    doc_id = message.document.file_id if content_type == "document" and message.document else None
+    from_chat = message.chat.id
+    msg_id = message.message_id
+    status_mid = status.message_id
+
+    def _run():
+        sent, failed, newly_blocked = 0, 0, 0
+        for i, uid_str in enumerate(uids, start=1):
+            try:
+                target_uid = int(uid_str)
+            except Exception:
+                failed += 1
+                continue
+            try:
+                if content_type == "text":
+                    bot.send_message(target_uid, f"📢 <b>សារពី Admin</b>\n\n{text_body}")
+                elif content_type == "photo" and photo_id:
+                    bot.send_photo(target_uid, photo_id, caption=caption)
+                elif content_type == "video" and video_id:
+                    bot.send_video(target_uid, video_id, caption=caption)
+                elif content_type == "document" and doc_id:
+                    bot.send_document(target_uid, doc_id, caption=caption)
+                else:
+                    bot.forward_message(target_uid, from_chat, msg_id)
+                sent += 1
+            except Exception as e:
+                failed += 1
+                if _is_blocked_error(e):
+                    mark_user_blocked(target_uid)
+                    newly_blocked += 1
+            time.sleep(0.05)
+            if i % 25 == 0 or i == total:
+                try:
+                    bot.edit_message_text(
+                        f"⏳ កំពុងផ្ញើ... {i}/{total} (✅ {sent} / ❌ {failed})",
+                        chat_id,
+                        status_mid,
+                    )
+                except Exception:
+                    pass
+        try:
+            bot.send_message(
+                chat_id,
+                f"✅ <b>ផ្ញើសារបញ្ចប់</b>\n\n"
+                f"សរុបផ្ញើ: {total}\n"
+                f"ជោគជ័យ: {sent}\n"
+                f"បរាជ័យ: {failed}\n"
+                f"Skip (block មុន): {skipped_blocked}\n"
+                f"Block ថ្មីកំណត់: {newly_blocked}",
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, daemon=True, name="broadcast").start()
 
 
 @bot.message_handler(commands=["broadcast"])
@@ -4359,14 +4617,15 @@ def cmd_broadcast(message):
         )
         bot.register_next_step_handler(msg, broadcast_step_content)
         return
-    users = load_users()
     sent, failed = 0, 0
-    for uid in users:
+    for uid in iter_broadcast_uids():
         try:
             bot.send_message(int(uid), f"📢 <b>សេចក្តីជូនដំណឹង</b>\n\n{text}")
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
+            if _is_blocked_error(e):
+                mark_user_blocked(uid)
         time.sleep(0.05)  # ជៀសវាង Telegram flood-control (429) ពេល user ច្រើន
     bot.reply_to(message, f"✅ ផ្ញើជោគជ័យ {sent} នាក់ ({failed} បរាជ័យ)")
 
@@ -4397,10 +4656,30 @@ def reply_admin_emoji(message):
     and not c.data.startswith("buyerapi_")
 ))
 def callback_router(call):
-    data = call.data
+    data = call.data or ""
     uid = call.from_user.id
-    chat_id = call.message.chat.id
+    chat_id = call.message.chat.id if call.message else None
+    if chat_id is None:
+        try:
+            bot.answer_callback_query(call.id, "❌ សារមិនអាចប្រើបាន", show_alert=True)
+        except Exception:
+            pass
+        return
 
+    try:
+        _callback_router_inner(call, data, uid, chat_id)
+    except Exception as e:
+        import traceback
+        print(f"[callback_router] ERROR data={data!r} uid={uid}: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            bot.answer_callback_query(call.id, "⚠️ មានបញ្ហា សូមព្យាយាមម្តងទៀត", show_alert=True)
+        except Exception:
+            pass
+        notify_admin_error(f"callback_router data={data!r}", e)
+
+
+def _callback_router_inner(call, data, uid, chat_id):
     if data == "menu_shop":
         try:
             bot.answer_callback_query(call.id)
@@ -5983,22 +6262,35 @@ def broadcast_new_stock(key, added_count):
     if not p or added_count <= 0:
         return 0, 0
     icon = resolve_icon(p.get("icon", "📦"))
+    left = stock_count(key)
+    left_disp = left if left < 999 else "∞"
+    name = p.get("name") or key
     text = (
-        f"➕ <b>ស្តុកថ្មីត្រូវបានបន្ថែមសម្រាប់ {p['name']}!</b>\n\n"
-        f"📦 ថ្មីបន្ថែម: <b>{added_count} items</b>\n"
-        f"📊 សរុបនៅសល់: <b>{stock_count(key)} items</b>\n"
-        f"💰 តម្លៃ: <b>${p['price']:.2f}</b>"
+        f"➕ <b>ស្តុកចូលថ្មី — {html.escape(str(name))}!</b>\n\n"
+        f"📦 ថ្មី: <b>+{added_count}</b>\n"
+        f"📊 សរុបនៅសល់: <b>{left_disp}</b>\n"
+        f"💰 តម្លៃ: <b>${float(p.get('price') or 0):.2f}</b>\n\n"
+        f"🛒 ចុចខាងក្រោមដើម្បីទិញឥឡូវ!"
     )
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(pbtn(f"{icon} {p['name'].upper()}", callback_data=f"buyopt_{key}", style="success"))
-    users = load_users()
+    kb.add(pbtn(f"{icon} ទិញឥឡូវ", callback_data=f"buyopt_{key}", style="success"))
     sent, failed = 0, 0
-    for uid in users:
+    for uid in iter_broadcast_uids():
         try:
             bot.send_message(int(uid), text, reply_markup=kb)
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
+            if _is_blocked_error(e):
+                mark_user_blocked(uid)
+    try:
+        notify_public(
+            f"➕ <b>ស្តុកចូលថ្មី!</b>\n"
+            f"{icon} {html.escape(str(name))}\n"
+            f"📦 +{added_count} · សល់ {left_disp} · 💵 ${float(p.get('price') or 0):.2f}"
+        )
+    except Exception:
+        pass
     return sent, failed
 
 
@@ -6023,14 +6315,15 @@ def broadcast_price_change(key, old_price, new_price):
     )
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(pbtn(f"{icon} {p['name'].upper()} — ${new_price:.2f}", callback_data=f"buyopt_{key}", style="success"))
-    users = load_users()
     sent, failed = 0, 0
-    for uid in users:
+    for uid in iter_broadcast_uids():
         try:
             bot.send_message(int(uid), text, reply_markup=kb)
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
+            if _is_blocked_error(e):
+                mark_user_blocked(uid)
     notify_public(
         f"{header}\n💵 <s>${old_price:.2f}</s> → 💰 <b>${new_price:.2f}</b>"
     )
@@ -6051,14 +6344,15 @@ def broadcast_low_stock(key, left):
     )
     kb = types.InlineKeyboardMarkup(row_width=1)
     kb.add(pbtn(f"{icon} ទិញឥឡូវ — {p['name'].upper()}", callback_data=f"buyopt_{key}", style="success"))
-    users = load_users()
     sent, failed = 0, 0
-    for uid in users:
+    for uid in iter_broadcast_uids():
         try:
             bot.send_message(int(uid), text, reply_markup=kb)
             sent += 1
-        except Exception:
+        except Exception as e:
             failed += 1
+            if _is_blocked_error(e):
+                mark_user_blocked(uid)
     notify_public(
         f"🚨 <b>ស្តុកជិតអស់ — {icon} {p['name']}!</b>\nសល់តែ {left} accounts ទៀតប៉ុណ្ណោះ 💵 ${p['price']:.2f}\n⏳ ទិញឲ្យឆាប់!"
     )
@@ -6668,20 +6962,36 @@ def callback_buyerapi(call):
 
     elif data in ("buyerapi_sync", "buyerapi_sync_price"):
         overwrite = data == "buyerapi_sync_price"
-        added, updated, skipped, err = sync_products_from_buyer_api(overwrite_price=overwrite)
+        added, updated, skipped, err, restocked = sync_products_from_buyer_api(
+            overwrite_price=overwrite, notify_restock=True,
+        )
         if err:
             bot.send_message(
                 chat_id,
                 f"❌ Sync បរាជ័យ\n<code>{html.escape(str(err)[:400])}</code>",
             )
             return
+        restock_line = ""
+        if restocked:
+            names = []
+            prods = load_products()
+            for k, old_s, new_s in restocked[:8]:
+                nm = (prods.get(k) or {}).get("name") or k
+                names.append(f"• {html.escape(str(nm))}: {old_s} → <b>{new_s}</b>")
+            restock_line = (
+                f"\n\n📢 <b>ចូលស្តុក — ជូនដំណឹង user រួច</b> ({len(restocked)})\n"
+                + "\n".join(names)
+            )
+            if len(restocked) > 8:
+                restock_line += f"\n… និង {len(restocked) - 8} ទៀត"
         bot.send_message(
             chat_id,
             f"✅ <b>Sync រួច</b>\n"
             f"├ ➕ Product ថ្មី: <b>{added}</b>\n"
             f"├ 🔄 បាន update: <b>{updated}</b>\n"
             f"├ ⏭ រំលង: {skipped}\n"
-            f"└ តម្លៃ: {'ប្តូរតាម API' if overwrite else 'រក្សាតម្លៃហាង (បើមានរួច)'}\n\n"
+            f"└ តម្លៃ: {'ប្តូរតាម API' if overwrite else 'រក្សាតម្លៃហាង (បើមានរួច)'}"
+            f"{restock_line}\n\n"
             f"Product ទាំងនេះ delivery_type = <code>api</code> — "
             f"ពេល customer ទិញ bot នឹង auto-purchase ពី supplier។",
         )
@@ -6714,6 +7024,41 @@ def start_keep_alive():
     ).start()
 
 
+def start_buyer_api_auto_sync():
+    """Background loop: sync stock ពី supplier រៀងរាល់ BUYER_API_SYNC_INTERVAL វិនាទី។
+    ពេល product អស់ → មានស្តុកវិញ bot broadcast «ស្តុកចូលថ្មី» ទៅ user ទាំងអស់។"""
+    interval = BUYER_API_SYNC_INTERVAL
+    if interval <= 0:
+        print("[buyer_api_auto_sync] បិទ (BUYER_API_SYNC_INTERVAL=0)", flush=True)
+        return
+    if not buyer_api_configured():
+        print("[buyer_api_auto_sync] បិទ — BUYER_API_KEY មិនទាន់ set", flush=True)
+        return
+
+    def _loop():
+        print(f"[buyer_api_auto_sync] ចាប់ផ្តើម — រៀងរាល់ {interval}s", flush=True)
+        # រង់ចាំបន្តិចពេល bot ទើប start
+        time.sleep(min(30, interval))
+        while True:
+            try:
+                added, updated, skipped, err, restocked = sync_products_from_buyer_api(
+                    overwrite_price=False, notify_restock=True,
+                )
+                if err:
+                    print(f"[buyer_api_auto_sync] error: {err}", flush=True)
+                else:
+                    print(
+                        f"[buyer_api_auto_sync] ok added={added} updated={updated} "
+                        f"skipped={skipped} restocked={len(restocked)}",
+                        flush=True,
+                    )
+            except Exception as e:
+                print(f"[buyer_api_auto_sync] exception: {e}", flush=True)
+            time.sleep(max(60, interval))
+
+    threading.Thread(target=_loop, daemon=True, name="buyer-api-auto-sync").start()
+
+
 # ------------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------------
@@ -6721,6 +7066,7 @@ if __name__ == "__main__":
     if not BOT_TOKEN:
         raise SystemExit("❌ សូម set environment variable BOT_TOKEN ជាមុនសិន")
     start_keep_alive()
+    start_buyer_api_auto_sync()
     print("🤖 Bot កំពុងដំណើរការ...")
     while True:
         try:
