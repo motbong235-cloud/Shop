@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Eing StoreKh Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App) [v17]
-(ឯកសារនេះឈ្មោះ premium_shop_bot_v17.py)
+Eing StoreKh Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ្មាន Mini App) [v16]
+(ឯកសារនេះឈ្មោះ premium_shop_bot_v16.py)
 ----------------------------------
 លក់ account premium (ChatGPT, Netflix, Spotify, Office365, Canva ...) តាម Telegram
 - Stock គ្រប់គ្រងតាមឯកសារ .txt (មួយបន្ទាត់ = account មួយ)
@@ -49,7 +49,7 @@ Eing StoreKh Premium Account Shop Bot — CLASSIC (bot ធម្មតា, គ�
   ត្រូវបានបិទក្នុងពេលតែមួយ user ព្យាយាម /deposit នឹងឃើញសារឲ្យទាក់ទង Admin ដោយផ្ទាល់ ជំនួសឲ្យការបង្ខំ
   ប្រើ Manual QR។
 
-ចំណាំ (v17): ប្តូរឈ្មោះហាងទៅជា "Eing StoreKh" (STORE_NAME default) និងលុបមុខងារ Bakong KHQR
+ចំណាំ (v16 — បន្ថែម): ប្តូរឈ្មោះហាងទៅជា "Eing StoreKh" (STORE_NAME default) និងលុបមុខងារ Bakong KHQR
   (CamRapidPay) ចេញទាំងស្រុង។ ឥឡូវ auto payment ប្រើ ABA PayWay ជំនួស KHMER SYSTEM —
   env: ABA_PAYWAY_API_KEY (+ optional ABA_PAYWAY_BASE_URL / ABA_PAYWAY_MERCHANT_ID)។ សល់ Manual QR ជាជម្រើសបម្រុង។
 """
@@ -61,6 +61,7 @@ import base64
 import html
 import json
 import time
+import math
 import hashlib
 import threading
 import requests
@@ -72,9 +73,8 @@ from telebot import types
 # ------------------------------------------------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
-# --- ABA PayWay --- deposit ស្វ័យប្រវត្តិ (ABA PayWay QR)
-# API key (ឧ. ak_xxxxxxxx) កំណត់ក្នុង env: ABA_PAYWAY_API_KEY
-# (env ចាស់ដែលធ្លាប់ប្រើ ត្រូវបានទទួលស្គាល់ជា fallback ដើម្បីកុំឲ្យ bot ដាច់ការងារ)
+# ABA PayWay (deposit auto)
+# key ដាក់ក្នុង env ABA_PAYWAY_API_KEY — ឈ្មោះ env ចាស់នៅតែអានបាន កុំឲ្យ bot គាំងពេល deploy
 def _env_first(*names, default=""):
     for n in names:
         v = os.environ.get(n, "")
@@ -129,6 +129,7 @@ EMOJI_FILE = os.path.join(DATA_DIR, "premium_emoji.json")
 # មកឲ្យ admin ត្រួតពិនិត្យ + បញ្ចូលលុយឲ្យដោយដៃ (មិនមែន auto-detect ទេ)
 PAYMENT_CONFIG_FILE = os.path.join(DATA_DIR, "payment_config.json")
 PENDING_DEPOSITS_FILE = os.path.join(DATA_DIR, "pending_deposits.json")
+CREDITED_FILE = os.path.join(DATA_DIR, "credited_payments.json")  # payment_id ដែល credit រួច (ការពារ credit ២ដង)
 # ករណី product ប្រភេទ "email" (មិនមែនចែក account ពី stock file ទេ) — pending
 # រហូតដល់ admin ដាក់ Premium ចូល email របស់ user ដោយផ្ទាល់ រួចចុច 'រួចរាល់'
 PENDING_EMAIL_ORDERS_FILE = os.path.join(DATA_DIR, "pending_email_orders.json")
@@ -375,11 +376,10 @@ TR = {
         "zh": "💰 充值 <b>${amount:.2f}</b>\n\n请选择支付方式：",
     },
     "pay_method_aba_btn": {"km": "💳 ABA PayWay", "en": "💳 ABA PayWay", "zh": "💳 ABA PayWay"},
-    "open_payment_page_btn": {"km": "🔗 បើកទំព័រទូទាត់", "en": "🔗 Open Payment Page", "zh": "🔗 打开支付页面"},
     "open_aba_app_btn": {
-        "km": "🚀 បើក ABA App ស្កេនស្វ័យប្រវត្តិ",
-        "en": "🚀 Open ABA App to Auto-Scan",
-        "zh": "🚀 打开 ABA App 自动扫码",
+        "km": "🚀 បើក ABA Mobile",
+        "en": "🚀 Open ABA Mobile",
+        "zh": "🚀 打开 ABA Mobile",
     },
     "retry_btn": {"km": "🔁 ព្យាយាមម្តងទៀត", "en": "🔁 Retry", "zh": "🔁 重试"},
     "deposit_fail_generic": {
@@ -441,6 +441,31 @@ TR = {
         "en": "❌ Amount is below the minimum (${min:.2f}). Tap /deposit to try again",
         "zh": "❌ 金额低于最低限额 (${min:.2f})。点击 /deposit 重试",
     },
+    "deposit_amount_too_large": {
+        "km": "❌ ចំនួនលើសកំណត់អតិបរមា (${max:.2f}) ក្នុងមួយដង។ សូមបញ្ចូលចំនួនតិចជាងនេះ",
+        "en": "❌ Amount exceeds the maximum (${max:.2f}) per deposit. Please enter a smaller amount",
+        "zh": "❌ 金额超过单次充值上限 (${max:.2f})，请输入较小的金额",
+    },
+    "qr_cooldown": {
+        "km": "⏳ សូមរង់ចាំ {seconds} វិនាទី មុនបង្កើត QR ថ្មី",
+        "en": "⏳ Please wait {seconds}s before creating a new QR",
+        "zh": "⏳ 请等待 {seconds} 秒后再生成新的二维码",
+    },
+    "qr_locked": {
+        "km": "🚫 អ្នកបានបង្កើត QR ច្រើនដងដោយមិនទាន់ទូទាត់។ សូមរង់ចាំ {minutes} នាទី ហើយសាកម្តងទៀត",
+        "en": "🚫 You created several QR codes without paying. Please wait {minutes} min and try again",
+        "zh": "🚫 您多次生成二维码但未付款，请等待 {minutes} 分钟后再试",
+    },
+    "deposit_busy": {
+        "km": "⏳ ប្រព័ន្ធកំពុងមមាញឹក សូមព្យាយាមម្តងទៀតបន្តិចក្រោយ",
+        "en": "⏳ The system is busy, please try again shortly",
+        "zh": "⏳ 系统繁忙，请稍后再试",
+    },
+    "manual_too_many_pending": {
+        "km": "⏳ អ្នកមានសំណើ deposit កំពុងរង់ចាំច្រើនពេក។ សូមរង់ចាំ Admin ផ្ទៀងផ្ទាត់សិន",
+        "en": "⏳ You have too many pending deposit requests. Please wait for Admin to verify them first",
+        "zh": "⏳ 您有太多待处理的充值请求，请先等待管理员核实",
+    },
     "email_order_rejected": {
         "km": "❌ ការកម្មង់ <b>{name}</b> (Email: <code>{email}</code>) មិនអាចដំណើរការបានទេ។\n"
               "💰 លុយ ${price:.2f} ត្រូវបានសងត្រឡប់ចូល Wallet វិញ (សមតុល្យថ្មី: ${balance:.2f})\n\n"
@@ -493,11 +518,6 @@ TR = {
         "zh": "⏳ 您已有一个待处理的充值二维码 <b>${amount:.2f}</b>！\n"
               "请扫描/支付上方二维码，或等待其过期(~{minutes} 分钟，约剩 {remaining} 秒)后再创建新的。\n\n"
               "🛍 与此同时，您仍可使用现有钱包余额前往商店购买。",
-    },
-    "goto_shop_btn": {
-        "km": "🛍 ទៅហាងទិញឥឡូវ",
-        "en": "🛍 Go to Shop",
-        "zh": "🛍 立即前往商店",
     },
     "lang_choose": {
         "km": "🌐 សូមជ្រើសរើសភាសា / Please choose your language / 请选择语言:",
@@ -696,7 +716,7 @@ EMOJI_CATEGORIES = [
     ("🇬🇧", "🇬🇧 ទង់អង់គ្លេស (ជ្រើសភាសា)"),
     ("🇨🇳", "🇨🇳 ទង់ចិន (ជ្រើសភាសា)"),
     ("🔀", "🔀 បិទ/បើក វិធីទូទាត់ (Admin)"),
-    ("🚀", "🚀 បើក ABA App ស្កេនស្វ័យប្រវត្តិ"),
+    ("🚀", "🚀 បើក ABA Mobile"),
     ("⚪", "⚪ មិនទាន់កំណត់ (Status)"),
 ]
 
@@ -1919,9 +1939,9 @@ def _build_aba_app_deeplink(data):
     return None
 
 
-def aba_check_payment(payment_id):
-    """ត្រួតពិនិត្យស្ថានភាព payment តាម transaction_id (ABA PayWay) —
-    ត្រឡប់ True បើ paid=true ឬ status=paid ឬ action=approved"""
+def aba_check_payment(payment_id, expected_amount=None):
+    """check ថា transaction នេះបង់ហើយឬនៅ។ True តែពេល paid ពិត
+    + id ត្រូវគ្នា + លុយមិនតិចជាងដែលស្នើ (បើ API ផ្ញើ amount មក)"""
     if not payment_id or not ABA_PAYWAY_API_KEY:
         return False
     try:
@@ -1934,20 +1954,45 @@ def aba_check_payment(payment_id):
             },
             timeout=10,
         )
+        if r.status_code != 200:
+            return False
         data = r.json()
+        if not isinstance(data, dict):
+            return False
         # Response shapes: { success, data: { paid, status, action } } ឬ flat
         d = data.get("data") if isinstance(data.get("data"), dict) else data
         if not isinstance(d, dict):
             return False
-        if d.get("paid") is True:
-            return True
+        # id ត្រូវតែដូចដែលយើងសួរ
+        rid = d.get("transaction_id") or d.get("payment_id") or d.get("id")
+        if rid and str(rid) != str(payment_id):
+            print(f"[aba_check_payment] transaction_id mismatch: {rid!r} != {payment_id!r}", flush=True)
+            return False
         status = str(d.get("status", "")).lower()
         action = str(d.get("action", "")).lower()
-        if status in ("paid", "approved", "completed", "success"):
-            return True
-        if action in ("approved", "paid"):
-            return True
-        return False
+        paid = (
+            d.get("paid") is True
+            or status in ("paid", "approved", "completed")
+            or action in ("approved", "paid")
+        )
+        if not paid:
+            return False
+        # check amount (តែពេលជា USD ឬមិនបញ្ជាក់ currency)
+        if expected_amount is not None:
+            cur = str(d.get("currency", "USD")).upper()
+            if cur in ("USD", ""):
+                for k in ("amount", "paid_amount", "amount_paid"):
+                    v = d.get(k)
+                    if v is None:
+                        continue
+                    try:
+                        if float(v) + 0.009 < float(expected_amount):
+                            print(f"[aba_check_payment] amount too low: paid={v} expected={expected_amount}", flush=True)
+                            return False
+                    except (TypeError, ValueError):
+                        pass
+                    break
+        return True
     except Exception as e:
         print(f"[aba_check_payment/abapayway] error: {e}", flush=True)
     return False
@@ -2200,33 +2245,221 @@ def _clear_active_auto_deposit(uid):
         _active_auto_deposits.pop(uid, None)
 
 
+# ------------------------------------------------------------------
+# ការពារ spam QR / bypass payment
+# ------------------------------------------------------------------
+# - amount ត្រូវជាលេខពិត នៅចន្លោះ min..max (nan/inf មិនឲ្យចូល)
+# - ១ user ១ QR ក្នុងមួយពេល — reserve មុនហៅ gateway ទើបចុចលឿនៗមិនរអិល
+# - cooldown រវាង QR + បង្កើតហើយមិនបង់ច្រើនដង → lock បន្តិច
+# - poll thread មានកំណត់ កុំឲ្យ server ធ្ងន់
+# - payment_id មួយ credit បានតែម្តង (save ក្នុង credited_payments.json)
+def _env_num(name, default, cast=float):
+    try:
+        return cast(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return cast(default)
+
+
+DEPOSIT_MAX_AMOUNT = _env_num("DEPOSIT_MAX_AMOUNT", 500.0)          # max ក្នុងមួយដង ($)
+QR_COOLDOWN_SECONDS = _env_num("QR_COOLDOWN_SECONDS", 20, int)      # ចន្លោះ QR ២ ដង
+QR_STRIKE_LIMIT = _env_num("QR_STRIKE_LIMIT", 3, int)               # QR ផុតមិនបង់ប៉ុន្មានដងទើប lock
+QR_STRIKE_WINDOW = _env_num("QR_STRIKE_WINDOW", 1800, int)          # រាប់ក្នុងរយៈប៉ុន្មានវិនាទី
+QR_LOCK_SECONDS = _env_num("QR_LOCK_SECONDS", 900, int)             # lock ប៉ុន្មានវិនាទី
+MAX_CONCURRENT_POLLS = _env_num("MAX_CONCURRENT_POLLS", 150, int)
+MANUAL_PENDING_MAX = _env_num("MANUAL_PENDING_MAX", 3, int)         # manual pending ច្រើនបំផុត/user
+MANUAL_PENDING_WINDOW = _env_num("MANUAL_PENDING_WINDOW", 1800, int)
+
+_qr_last_created = {}     # uid -> ពេល QR ចុងក្រោយ
+_qr_strikes = {}          # uid -> [ពេលដែល QR ផុតកំណត់មិនបង់]
+_qr_locked_until = {}     # uid -> ពេល unlock
+_manual_last_created = {}
+_active_polls = 0
+
+
+def _deposit_notice(uid, chat_id, text, call=None):
+    if call:
+        try:
+            bot.answer_callback_query(call.id, text[:200], show_alert=True)
+            return
+        except Exception:
+            pass
+    try:
+        bot.send_message(chat_id, text)
+    except Exception:
+        pass
+
+
+def _check_deposit_amount(uid, chat_id, amount, call=None):
+    try:
+        a = float(amount)
+    except (TypeError, ValueError):
+        a = float("nan")
+    if not math.isfinite(a):
+        _deposit_notice(uid, chat_id, t(uid, "amount_not_number"), call)
+        return False
+    if a < DEPOSIT_MIN_AMOUNT:
+        _deposit_notice(uid, chat_id, t(uid, "amount_below_min", min=DEPOSIT_MIN_AMOUNT), call)
+        return False
+    if a > DEPOSIT_MAX_AMOUNT:
+        _deposit_notice(uid, chat_id, t(uid, "deposit_amount_too_large", max=DEPOSIT_MAX_AMOUNT), call)
+        return False
+    return True
+
+
+def _reserve_auto_deposit(uid, amount, max_minutes=5):
+    """កក់ slot QR មុន (atomic) → (ok, reason, info)
+    reason: pending / locked / cooldown / busy / ok"""
+    now = time.time()
+    with _active_auto_deposits_lock:
+        rec = _active_auto_deposits.get(uid)
+        if rec and now < rec["deadline"]:
+            return False, "pending", rec
+        locked = _qr_locked_until.get(uid, 0)
+        if now < locked:
+            return False, "locked", int(locked - now)
+        last = _qr_last_created.get(uid, 0)
+        if now - last < QR_COOLDOWN_SECONDS:
+            return False, "cooldown", int(QR_COOLDOWN_SECONDS - (now - last)) + 1
+        if _active_polls >= MAX_CONCURRENT_POLLS:
+            return False, "busy", 0
+        _active_auto_deposits[uid] = {
+            "amount": amount, "reference": None, "reserved": True,
+            "deadline": now + 120, "max_minutes": max_minutes,
+        }
+        _qr_last_created[uid] = now
+        return True, "ok", None
+
+
+def _release_reservation(uid):
+    """QR បង្កើតមិនបាន → លែង slot ចេញ (កុំឲ្យ user ជាប់ cooldown ទាំងគ្មានកំហុស)"""
+    with _active_auto_deposits_lock:
+        rec = _active_auto_deposits.get(uid)
+        if rec and rec.get("reserved"):
+            _active_auto_deposits.pop(uid, None)
+            _qr_last_created.pop(uid, None)
+
+
+def _register_qr_strike(uid, user_label=None):
+    now = time.time()
+    locked = False
+    with _active_auto_deposits_lock:
+        hist = [ts for ts in _qr_strikes.get(uid, []) if now - ts < QR_STRIKE_WINDOW]
+        hist.append(now)
+        if len(hist) >= QR_STRIKE_LIMIT:
+            _qr_locked_until[uid] = now + QR_LOCK_SECONDS
+            hist = []
+            locked = True
+        _qr_strikes[uid] = hist
+    if locked and ADMIN_ID:
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"🚫 <b>Lock បង្កើត QR បណ្តោះអាសន្ន ({QR_LOCK_SECONDS // 60} នាទី)</b>\n"
+                f"👤 {user_label or 'User'} (ID: <code>{uid}</code>)\n"
+                f"មូលហេតុ: បង្កើត QR ហើយមិនបង់ {QR_STRIKE_LIMIT} ដងជាប់គ្នា",
+            )
+        except Exception:
+            pass
+
+
+def _reset_qr_strikes(uid):
+    with _active_auto_deposits_lock:
+        _qr_strikes.pop(uid, None)
+
+
+def _claim_payment_credit(reference, uid, amount):
+    """mark payment_id ថា credit ហើយ — False បើធ្លាប់ credit ទៅហើយ"""
+    if not reference:
+        return False
+    with _lock:
+        done = _load(CREDITED_FILE, {})
+        if reference in done:
+            return False
+        done[reference] = {"uid": uid, "amount": amount, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        _save(CREDITED_FILE, done)
+        return True
+
+
+def _release_payment_credit(reference):
+    with _lock:
+        done = _load(CREDITED_FILE, {})
+        if done.pop(reference, None) is not None:
+            _save(CREDITED_FILE, done)
+
+
+def _manual_deposit_allowed(uid):
+    """Manual QR: កុំឲ្យ user spam សំណើទៅ admin → (ok, reason, seconds)"""
+    now = time.time()
+    with _active_auto_deposits_lock:
+        last = _manual_last_created.get(uid, 0)
+        if now - last < QR_COOLDOWN_SECONDS:
+            return False, "cooldown", int(QR_COOLDOWN_SECONDS - (now - last)) + 1
+        pending = 0
+        for rec in load_pending_deposits().values():
+            if rec.get("uid") == uid and rec.get("status") == "pending":
+                try:
+                    ts = time.mktime(time.strptime(rec.get("created_at", ""), "%Y-%m-%d %H:%M:%S"))
+                except (ValueError, OverflowError):
+                    ts = 0
+                if now - ts < MANUAL_PENDING_WINDOW:
+                    pending += 1
+        if pending >= MANUAL_PENDING_MAX:
+            return False, "many", 0
+        _manual_last_created[uid] = now
+        return True, "ok", 0
+
+
+def _claim_pending_deposit(dep_id, new_status):
+    """pending → new_status (atomic) ទើប admin ចុចពីរដងមិន credit ២ដង"""
+    with _lock:
+        deps = load_pending_deposits()
+        rec = deps.get(dep_id)
+        if not rec or rec.get("status") != "pending":
+            return None
+        rec["status"] = new_status
+        deps[dep_id] = rec
+        save_pending_deposits(deps)
+        return rec
+
+
 def _notify_deposit_already_pending(uid, chat_id, rec, call=None):
     """ជូនដំណឹង user ថាមាន QR ដេប៉ូ auto (ABA) កំពុង pending រួចហើយ —
-    ព្រម button ឲ្យចូលទៅហាងទិញឥវ៉ាន់ផ្ទាល់ខណៈកំពុងរង់ចាំ។"""
+    ។"""
     remaining = max(0, int(rec["deadline"] - time.time()))
     text = t(
         uid, "deposit_already_pending",
         amount=rec["amount"], minutes=rec.get("max_minutes", 5), remaining=remaining,
     )
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(pbtn(t(uid, "goto_shop_btn"), callback_data="qr_goshop", style="success"))
     if call:
         try:
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-    bot.send_message(chat_id, text, reply_markup=kb)
+    bot.send_message(chat_id, text)
 
 
 def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5, checker=None):
     # NOTE: _clear_active_auto_deposit(uid) ត្រូវបានហៅនៅ finally ខាងក្រោមបំផុត
     # មិនថា deposit នេះជោគជ័យ ឬផុតកំណត់ ឬកើត exception ក៏ដោយ ដើម្បីអោយ user អាចបង្កើត QR ថ្មីបាន
+    global _active_polls
+    with _active_auto_deposits_lock:
+        _active_polls += 1
+    paid_ok = False
     try:
         checker = checker or aba_check_payment
         deadline = time.time() + max_minutes * 60
         while time.time() < deadline:
-            if checker(reference):
-                new_balance = update_balance(uid, amount)
+            if checker(reference, amount):
+                paid_ok = True
+                # payment_id នេះ credit ហើយឬនៅ? ធ្លាប់ហើយ → ចេញ
+                if not _claim_payment_credit(reference, uid, amount):
+                    print(f"[poll_deposit] duplicate credit blocked: ref={reference} uid={uid}", flush=True)
+                    return
+                try:
+                    new_balance = update_balance(uid, amount)
+                except Exception:
+                    _release_payment_credit(reference)
+                    raise
                 try:
                     bot.send_message(uid, t(uid, "auto_deposit_success", amount=amount, balance=new_balance, store=STORE_NAME))
                 except Exception:
@@ -2255,10 +2488,15 @@ def poll_deposit(uid, chat_id, amount, reference, user_label=None, max_minutes=5
                 )
             except Exception:
                 pass
+        _register_qr_strike(uid, user_label)
     except Exception as e:
         print(f"[poll_deposit] {e}", flush=True)
         notify_admin_error(f"poll_deposit (uid={uid}, amount={amount})", e)
     finally:
+        with _active_auto_deposits_lock:
+            _active_polls = max(0, _active_polls - 1)
+        if paid_ok:
+            _reset_qr_strikes(uid)
         _clear_active_auto_deposit(uid)
 
 
@@ -3717,6 +3955,8 @@ def handle_deposit(uid, chat_id, amount, user_obj, call=None):
     """• បើមាន ABA PayWay auto-payment កំណត់ហើយ → ប្រើវិធីនោះផ្ទាល់ (auto-detect)
     • បើគ្មានកំណត់ (ឬ admin បិទតាម ADMIN_BTN_PAYTOGGLE) → ប្រើ QR ផ្ទាល់ខ្លួនដែល
       admin កំណត់ដោយដៃ + ឲ្យ user ផ្ញើវិក័យប័ត្រមកផ្ទៀងផ្ទាត់ដោយដៃ (លុះត្រាតែ admin បិទ Manual QR ផងដែរ)"""
+    if not _check_deposit_amount(uid, chat_id, amount, call):
+        return
     aba_ok = has_aba_payway()
     if aba_ok:
         _handle_deposit_aba(uid, chat_id, amount, user_obj, call=call)
@@ -3742,11 +3982,31 @@ def handle_deposit(uid, chat_id, amount, user_obj, call=None):
 
 
 def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
-    pending_rec = _get_active_auto_deposit(uid)
-    if pending_rec:
-        _notify_deposit_already_pending(uid, chat_id, pending_rec, call=call)
+    """check amount, check ថា ABA នៅបើក, កក់ slot, cooldown/lock រួចទើបទៅ core"""
+    if not _check_deposit_amount(uid, chat_id, amount, call):
         return
+    if not has_aba_payway():
+        # ប៊ូតុងចាស់ paym_aba_* មិនត្រូវ bypass ពេល admin បិទ ABA
+        handle_deposit(uid, chat_id, amount, user_obj, call=call)
+        return
+    ok, reason, info = _reserve_auto_deposit(uid, amount)
+    if not ok:
+        if reason == "pending":
+            _notify_deposit_already_pending(uid, chat_id, info, call=call)
+        elif reason == "cooldown":
+            _deposit_notice(uid, chat_id, t(uid, "qr_cooldown", seconds=info), call)
+        elif reason == "locked":
+            _deposit_notice(uid, chat_id, t(uid, "qr_locked", minutes=max(1, -(-info // 60))), call)
+        else:
+            _deposit_notice(uid, chat_id, t(uid, "deposit_busy"), call)
+        return
+    try:
+        _handle_deposit_aba_core(uid, chat_id, amount, user_obj, call=call)
+    finally:
+        _release_reservation(uid)  # លែងតែពេលមិនទាន់ចាប់ផ្តើម poll
 
+
+def _handle_deposit_aba_core(uid, chat_id, amount, user_obj, call=None):
     def _fail(err_text):
         if call:
             # Telegram limits callback-query alert text to 200 chars — err_text (Khmer
@@ -3791,14 +4051,10 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
     aba_app_link = _build_aba_app_deeplink(data)
 
     kb = types.InlineKeyboardMarkup(row_width=1)
-    # ប៊ូតុងនេះចុចម្តង បើក ABA App ដោយផ្ទាល់ ត្រៀម QR នេះឲ្យស្កេនស្វ័យប្រវត្តិ
+    # ប៊ូតុងនេះចុចម្តង បើក ABA Mobile ដោយផ្ទាល់ ត្រៀម QR នេះឲ្យស្កេនស្វ័យប្រវត្តិ
     # (ដំណើរការតែលើទូរស័ព្ទដែលបានដំឡើង ABA Mobile រួច — computer/desktop នឹងបើកមិនចេញទេ)
     if aba_app_link:
         kb.add(pbtn(t(uid, "open_aba_app_btn"), url=aba_app_link, style="primary"))
-    if pay_url:
-        kb.add(pbtn(t(uid, "open_payment_page_btn"), url=pay_url, style="primary"))
-    # ឲ្យ user អាចចូលទៅហាងទិញឥវ៉ាន់ផ្ទាល់ខណៈកំពុងរង់ចាំ QR នេះឲ្យបានទូទាត់
-    kb.add(pbtn(t(uid, "goto_shop_btn"), callback_data="qr_goshop", style="success"))
 
     caption = t(uid, "auto_qr_caption_aba", amount=amount, ref=payment_id or "-")
     if len(caption) > 1000:  # Telegram photo-caption limit = 1024 chars
@@ -3824,14 +4080,14 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
     sent_ok = False
     if photo_payload:
         try:
-            bot.send_photo(chat_id, photo_payload, caption=caption, reply_markup=kb)
+            bot.send_photo(chat_id, photo_payload, caption=caption, reply_markup=kb if kb.keyboard else None)
             sent_ok = True
         except Exception as e:
             print(f"[_handle_deposit_aba] send_photo failed: {e}", flush=True)
             notify_admin_error("_handle_deposit_aba send_photo", e)
     if not sent_ok:
-        if pay_url:
-            bot.send_message(chat_id, caption, reply_markup=kb)
+        if pay_url or aba_app_link:
+            bot.send_message(chat_id, caption, reply_markup=kb if kb.keyboard else None)
         else:
             _fail(t(uid, "deposit_no_qr_data"))
             return
@@ -3865,6 +4121,8 @@ def _handle_deposit_aba(uid, chat_id, amount, user_obj, call=None):
 
 
 def handle_deposit_manual(uid, chat_id, amount, user_obj, call=None):
+    if not _check_deposit_amount(uid, chat_id, amount, call):
+        return
     qr_file_id, qr_note = get_manual_qr()
     if not qr_file_id:
         text = t(uid, "manual_no_qr_set")
@@ -3881,6 +4139,14 @@ def handle_deposit_manual(uid, chat_id, amount, user_obj, call=None):
             )
         except Exception:
             pass
+        return
+
+    ok, reason, wait = _manual_deposit_allowed(uid)
+    if not ok:
+        if reason == "cooldown":
+            _deposit_notice(uid, chat_id, t(uid, "qr_cooldown", seconds=wait), call)
+        else:
+            _deposit_notice(uid, chat_id, t(uid, "manual_too_many_pending"), call)
         return
 
     ref = f"KZDEP{uid}{int(time.time())}"[:50]
@@ -3940,13 +4206,17 @@ def _handle_deposit_approve(call, dep_id):
     if not rec:
         bot.answer_callback_query(call.id, "❌ រកមិនឃើញសំណើនេះទេ", show_alert=True)
         return
-    if rec.get("status") != "pending":
-        bot.answer_callback_query(call.id, f"ℹ️ សំណើនេះត្រូវបានដោះស្រាយរួចហើយ ({rec.get('status')})", show_alert=True)
+    claimed = _claim_pending_deposit(dep_id, "approved")  # ចុចពីរដងក៏ credit តែម្តង
+    if not claimed:
+        bot.answer_callback_query(call.id, f"ℹ️ សំណើនេះត្រូវបានដោះស្រាយរួចហើយ ({get_pending_deposit(dep_id).get('status')})", show_alert=True)
         return
-    uid = rec["uid"]
-    amount = rec["amount"]
-    new_balance = update_balance(uid, amount)
-    update_pending_deposit(dep_id, status="approved")
+    uid = claimed["uid"]
+    amount = claimed["amount"]
+    try:
+        new_balance = update_balance(uid, amount)
+    except Exception:
+        update_pending_deposit(dep_id, status="pending")
+        raise
     try:
         bot.send_message(uid, t(uid, "deposit_approved", amount=amount, balance=new_balance, store=STORE_NAME))
     except Exception:
@@ -3965,12 +4235,12 @@ def _handle_deposit_reject(call, dep_id):
     if not rec:
         bot.answer_callback_query(call.id, "❌ រកមិនឃើញសំណើនេះទេ", show_alert=True)
         return
-    if rec.get("status") != "pending":
-        bot.answer_callback_query(call.id, f"ℹ️ សំណើនេះត្រូវបានដោះស្រាយរួចហើយ ({rec.get('status')})", show_alert=True)
+    claimed = _claim_pending_deposit(dep_id, "rejected")
+    if not claimed:
+        bot.answer_callback_query(call.id, f"ℹ️ សំណើនេះត្រូវបានដោះស្រាយរួចហើយ ({get_pending_deposit(dep_id).get('status')})", show_alert=True)
         return
-    uid = rec["uid"]
-    amount = rec["amount"]
-    update_pending_deposit(dep_id, status="rejected")
+    uid = claimed["uid"]
+    amount = claimed["amount"]
     try:
         bot.send_message(uid, t(uid, "deposit_rejected", amount=amount))
     except Exception:
