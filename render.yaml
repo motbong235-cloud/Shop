@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: premium-shop-bot
+    runtime: python
+    plan: starter
+    region: singapore
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python premium_shop_bot_v16.py
+    healthCheckPath: /
+    disk:
+      name: premium-shop-bot-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # --- Core (ចាំបាច់) ---
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: STORE_NAME
+        value: Kairozen Store
+      - key: ADMIN_ID
+        sync: false
+      - key: STORE_NAME
+        value: Kairozen Store
+      - key: DATA_DIR
+        value: /var/data
+
+      # --- Bakong KHQR (CamRapidPay) — deposit ស្វ័យប្រវត្តិទី ១ ---
+      - key: CAMRAPIDPAY_API_KEY
+        sync: false
+
+      # --- ABA PayWay (KHMER SYSTEM) — deposit ស្វ័យប្រវត្តិទី ២ ---
+      - key: ABA_API_KEY
+        sync: false
+      - key: ABA_MERCHANT_ID
+        sync: false
+      # - key: ABA_BASE_URL
+      #   value: https://khmer-system.com   # ប្រើ default បើមិនកំណត់
+
+      # --- Optional ---
+      - key: LOW_STOCK_THRESHOLD
+        value: "3"
+      - key: NOTIFY_CHAT_IDS
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false   # ទុកទទេបាន — RENDER_EXTERNAL_URL នឹងបំពេញស្វ័យប្រវត្តិ

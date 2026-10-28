@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Kairozen Store</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/miniapp/styles.css">
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M7 7h14l-1.5 9h-11z"/><circle cx="10" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/><path d="M3 3h2l1 4"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16.5 16.5L21 21"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-cart" viewBox="0 0 24 24"><path d="M6 6h15l-1.5 8H8z"/><path d="M6 6l-1-3H2"/><circle cx="9" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/></symbol>
+  <symbol id="i-img" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="1.8"/><path d="M3 16l5-4 4 3 3-2 6 4"/></symbol>
+  <symbol id="i-set" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4l1.4-1.4M17 7l1.4-1.4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l5 5L20 7"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.5 6.5L20 11l-6.5 1.5L12 19l-1.5-6.5L4 11l6.5-1.5z"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2.5"/><circle cx="17" cy="16" r="2.5"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></symbol>
+  <symbol id="i-design" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></symbol>
+  <symbol id="i-ai" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><circle cx="18" cy="5" r="1.2"/><circle cx="5" cy="18" r="1.2"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M8 9l4-4 4 4"/><path d="M4 18h16"/></symbol>
+  <symbol id="i-admin" viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></symbol>
+</svg>
+
+<header class="app-header">
+  <div class="logo">K</div>
+  <div>
+    <h1>Kairozen Store</h1>
+    <p>Premium Account · Digital Service</p>
+  </div>
+  <button type="button" class="hd-btn" id="btn-admin" style="display:none" title="Admin">
+    <svg class="ic"><use href="#i-admin"/></svg>
+  </button>
+</header>
+
+<!-- HOME -->
+<section class="scr on" id="scr-home">
+  <div class="hero" id="home-banner">
+    <div class="hero-fallback">
+      <h2>Premium Account &amp; Digital Services</h2>
+      <p>ទិញងាយស្រួល · រហ័ស · សុវត្ថិភាព</p>
+    </div>
+    <div class="hero-badge">Premium</div>
+  </div>
+  <div class="search">
+    <svg class="ic"><use href="#i-search"/></svg>
+    <input id="search-home" placeholder="ស្វែងរក..." autocomplete="off">
+  </div>
+  <div class="chips" id="chips-home">
+    <button type="button" class="chip on" data-cat="all">ទាំងអស់</button>
+    <button type="button" class="chip" data-cat="AI">AI</button>
+    <button type="button" class="chip" data-cat="Music">Music</button>
+    <button type="button" class="chip" data-cat="Video">Video</button>
+    <button type="button" class="chip" data-cat="Design">Design</button>
+  </div>
+  <div class="sec"><h3>ផលិតផលពេញនិយម</h3></div>
+  <div class="grid" id="home-grid"><div class="loading"><div class="spin"></div>កំពុងផ្ទុក…</div></div>
+</section>
+
+<!-- PRODUCTS -->
+<section class="scr" id="scr-products">
+  <div class="search">
+    <svg class="ic"><use href="#i-search"/></svg>
+    <input id="search-prod" placeholder="ស្វែងរកផលិតផល..." autocomplete="off">
+  </div>
+  <div class="chips" id="chips-prod">
+    <button type="button" class="chip on" data-cat="all">ទាំងអស់</button>
+    <button type="button" class="chip" data-cat="AI">AI</button>
+    <button type="button" class="chip" data-cat="Music">Music</button>
+    <button type="button" class="chip" data-cat="Video">Video</button>
+    <button type="button" class="chip" data-cat="Design">Design</button>
+  </div>
+  <div class="grid" id="prod-grid"></div>
+</section>
+
+<!-- DETAIL -->
+<section class="scr" id="scr-detail">
+  <div class="detail-hero">
+    <div class="ico-lg" id="detail-ico"></div>
+    <h2 id="detail-name">Product</h2>
+    <p id="detail-desc"></p>
+  </div>
+  <div class="sec"><h3>ជ្រើសផែនការ</h3></div>
+  <div class="plans" id="detail-plans"></div>
+  <button type="button" class="btn btn-p" id="btn-to-checkout">
+    <svg class="ic"><use href="#i-cart"/></svg> បន្តទៅបង់ប្រាក់
+  </button>
+</section>
+
+<!-- CHECKOUT -->
+<section class="scr" id="scr-checkout">
+  <div class="card">
+    <div class="sec"><h3>សង្ខេប</h3></div>
+    <p id="chk-summary" style="font-weight:700;font-size:14px"></p>
+  </div>
+  <div class="field">
+    <label>Email (ទទួល account)</label>
+    <input id="chk-email" type="email" placeholder="you@email.com" autocomplete="email">
+  </div>
+  <p class="err" id="chk-err"></p>
+  <button type="button" class="btn btn-p" id="chk-btn">បញ្ជាទិញ</button>
+</section>
+
+<!-- PAY -->
+<section class="scr" id="scr-pay">
+  <div class="card qr-box">
+    <h3 style="margin-bottom:10px;font-size:15px">ស្កេន QR ដើម្បីបង់ប្រាក់</h3>
+    <img id="pay-qr" alt="KHQR" style="display:none">
+    <p>ចំនួន: <b id="pay-amount">$0.00</b></p>
+    <p class="muted">Order: <span id="pay-id"></span></p>
+    <p class="muted" id="pay-note" style="margin-top:8px"></p>
+  </div>
+  <a class="btn btn-p" id="pay-aba" href="#" style="display:none;margin-bottom:10px">OPEN ABA Mobile</a>
+  <button type="button" class="btn btn-g" id="pay-check">
+    <svg class="ic"><use href="#i-check"/></svg> ពិនិត្យការបង់
+  </button>
+</section>
+
+<!-- ORDERS -->
+<section class="scr" id="scr-orders">
+  <div class="sec"><h3>ការបញ្ជាទិញ</h3></div>
+  <div class="list" id="orders-list"></div>
+</section>
+
+<!-- ACCOUNT -->
+<section class="scr" id="scr-account">
+  <div class="profile-head">
+    <div class="av" id="acc-av">K</div>
+    <h2 id="acc-name" style="font-size:17px">User</h2>
+    <p class="muted" id="acc-user">@user</p>
+  </div>
+  <div class="stats">
+    <div><b id="acc-orders">0</b><span>បញ្ជាទិញ</span></div>
+    <div><b id="acc-bal">$0</b><span>Wallet</span></div>
+    <div><b id="acc-mem">—</b><span>Member</span></div>
+  </div>
+  <div class="card" style="padding:4px 12px">
+    <div class="menu-row"><svg class="ic"><use href="#i-bag"/></svg> ប្រវត្តិបញ្ជាទិញ <svg class="ic chev"><use href="#i-chev"/></svg></div>
+    <div class="menu-row"><svg class="ic"><use href="#i-set"/></svg> ជំនួយ <svg class="ic chev"><use href="#i-chev"/></svg></div>
+  </div>
+</section>
+
+<!-- ADMIN -->
+<section class="scr" id="scr-admin">
+  <div class="admin-bar">
+    <svg class="ic" style="color:#7ec8ff"><use href="#i-admin"/></svg>
+    <div>
+      <b>Admin Panel</b>
+      <div style="font-size:11px;opacity:.75">Banner · រូបផលិតផល · តម្លៃ</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="sec"><h3>Banner ទំព័រដើម</h3></div>
+    <div id="admin-banner-preview" style="border-radius:12px;overflow:hidden;margin-bottom:10px;background:#eef4ff;min-height:80px"></div>
+    <label class="upl">
+      <svg class="ic" style="color:var(--p);margin-bottom:6px"><use href="#i-upload"/></svg>
+      <strong>Upload Banner</strong>
+      <span class="muted">JPG / PNG · ផ្ដេក 1200×400+</span>
+      <input type="file" id="admin-banner-file" accept="image/*">
+    </label>
+  </div>
+
+  <div class="card">
+    <div class="sec"><h3>ផលិតផល</h3></div>
+    <div id="admin-prod-list" class="list"></div>
+  </div>
+</section>
+
+<nav class="nav">
+  <button type="button" class="on" data-scr="home"><svg class="ic"><use href="#i-home"/></svg>ទំព័រដើម</button>
+  <button type="button" data-scr="products"><svg class="ic"><use href="#i-grid"/></svg>ផលិតផល</button>
+  <button type="button" data-scr="orders"><svg class="ic"><use href="#i-bag"/></svg>ការបញ្ជាទិញ</button>
+  <button type="button" data-scr="account"><svg class="ic"><use href="#i-user"/></svg>គណនី</button>
+</nav>
+<div class="toast" id="toast"></div>
+<script src="/miniapp/app.js"></script>
+</body>
+</html>
