@@ -19,11 +19,11 @@ services:
       - key: WEBAPP_URL
         sync: false
       - key: STORE_NAME
-        value: Kairozen Store
+        value: ZEN PREMIUM 
       - key: ADMIN_ID
         sync: false
       - key: STORE_NAME
-        value: Kairozen Store
+        value: ZEN PREMIUM 
       - key: DATA_DIR
         value: /var/data
 
